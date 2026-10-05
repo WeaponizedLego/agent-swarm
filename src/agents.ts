@@ -1,0 +1,43 @@
+import { accessSync, constants } from 'node:fs'
+import { join } from 'node:path'
+import { UserError } from './errors.ts'
+import type { AgentId } from './store.ts'
+
+const BIN: Record<AgentId, string[]> = { claude: ['claude'], codex: ['codex'], kiro: ['kiro-cli', 'chat'] }
+
+/**
+ * Interactive command line per agent. Each starts in the task dir, which holds one worktree
+ * per repo as a subfolder, so every repo is already inside the agent's workspace: no per-CLI
+ * "add directory" flag needed (codex does not even have one).
+ */
+export const agentArgv = (agent: AgentId): string[] => BIN[agent]
+
+/**
+ * PATH lookup to an absolute binary, so tmux's server (which may have a stale PATH) and ConPTY both
+ * get an exact file. On Windows a bare name is really `name.exe` / `name.cmd`, so PATHEXT is tried too.
+ */
+export function resolveBin(argv: string[], env: NodeJS.ProcessEnv = process.env, platform = process.platform): string[] {
+  const [bin, ...rest] = argv
+  const win = platform === 'win32'
+  const exts = win ? ['', ...(env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)] : ['']
+  for (const dir of (env.PATH ?? env.Path ?? '').split(win ? ';' : ':').filter(Boolean)) {
+    for (const ext of exts) {
+      try {
+        const full = join(dir, bin! + ext)
+        // Windows has no execute bit: there "launchable" means the file exists with a launchable extension.
+        accessSync(full, win ? constants.F_OK : constants.X_OK)
+        if (win && ext === '' && !/\.(exe|com|cmd|bat)$/i.test(full)) continue // an extensionless file (npm's sh shim) cannot be launched
+        return [full, ...rest]
+      } catch {
+        /* keep looking */
+      }
+    }
+  }
+  throw new UserError(`${bin} is not installed or not on PATH`)
+}
+
+/** A `.cmd`/`.bat` shim (how npm installs CLIs on Windows) is a cmd.exe script, not an executable: run it through cmd. */
+export function launchArgv(argv: string[], platform = process.platform, comspec = process.env.ComSpec): string[] {
+  if (platform === 'win32' && /\.(cmd|bat)$/i.test(argv[0] ?? '')) return [comspec ?? 'cmd.exe', '/d', '/c', ...argv]
+  return argv
+}

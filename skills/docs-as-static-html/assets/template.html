@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{TITLE}}</title>
+<meta name="description" content="{{DESCRIPTION}}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script>(function(){var t=localStorage.getItem('doc-theme');if(t)document.documentElement.setAttribute('data-theme',t);})()</script>
+<style>
+{{CSS}}
+</style>
+</head>
+<body>
+
+<div class="manhead">
+  <span class="left">{{MANHEAD_LEFT}}</span>
+  <span class="mid">{{MANHEAD_MID}}</span>
+  <span class="controls">
+    {{SEARCH_INPUT_HTML}}
+    {{THEME_PICKER_HTML}}
+    <span class="right">{{MANHEAD_RIGHT}}</span>
+  </span>
+</div>
+
+<div class="wrap">
+
+{{TITLE_BLOCK}}
+
+{{TOC_HTML}}
+
+<main>
+{{CONTENT}}
+</main>
+
+{{PAGENAV_HTML}}
+
+<div class="docfoot">
+  <span>{{FOOTER_LEFT}}</span>
+  <span>{{FOOTER_RIGHT}}</span>
+</div>
+
+</div>
+
+{{SCRIPTS}}
+<script>
+{{JS}}
+</script>
+</body>
+</html>
