@@ -38,7 +38,9 @@ export const stripTerminalReplies = (input: string) => input.replace(TERMINAL_RE
 export const ptyTerminals: Terminals = {
   async start(name, cwd, argv) {
     const [file, ...args] = launchArgv(argv)
-    const proc = pty.spawn(file!, args, { name: 'xterm-256color', cols: COLS, rows: ROWS, cwd, env: process.env as Record<string, string> })
+    // COLORTERM tells agents the browser's xterm can show 24-bit colour; without it Claude Code falls back to 256.
+    const env = { ...process.env, COLORTERM: 'truecolor' } as Record<string, string>
+    const proc = pty.spawn(file!, args, { name: 'xterm-256color', cols: COLS, rows: ROWS, cwd, env })
     const screen = new Terminal({ cols: COLS, rows: ROWS, scrollback: 1000, allowProposedApi: true })
     const serializer = new SerializeAddon()
     screen.loadAddon(serializer)

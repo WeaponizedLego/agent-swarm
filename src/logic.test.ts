@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { actionArgv } from './actions.ts'
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { agentArgv, launchArgv, resolveBin } from './agents.ts'
@@ -10,6 +10,8 @@ import { findOverlaps } from './housekeeper.ts'
 import { detectPm } from './overview.ts'
 import { stripTerminalReplies } from './pty-host.ts'
 import { slugify } from './sessions.ts'
+import { importSkills, listSkills, parseDescription, removeSkill, seedSkills } from './skills.ts'
+import { parseClaudeUsage } from './usage.ts'
 import { classify } from './state.ts'
 
 describe('classify', () => {
@@ -32,7 +34,7 @@ describe('slugify', () => {
 
 describe('agentArgv', () => {
   it('maps each agent to its interactive command', () => {
-    expect(agentArgv('claude')).toEqual(['claude'])
+    expect(agentArgv('claude')).toEqual(['claude', '--model', 'claude-opus-5-5', '--permission-mode', 'auto'])
     expect(agentArgv('codex')).toEqual(['codex'])
     expect(agentArgv('kiro')).toEqual(['kiro-cli', 'chat'])
   })
@@ -127,5 +129,69 @@ describe('stripTerminalReplies', () => {
     expect(stripTerminalReplies('\x1b[?2004;2$y')).toBe('') // mode report
     expect(stripTerminalReplies('ls -la\r')).toBe('ls -la\r')
     expect(stripTerminalReplies('\x1b[A\x1b[1;5C\x03')).toBe('\x1b[A\x1b[1;5C\x03') // arrows, ctrl-arrow, ctrl-c
+  })
+})
+
+describe('parseClaudeUsage', () => {
+  it('turns the plan windows into meters and skips windows the plan does not have', () => {
+    const meters = parseClaudeUsage({
+      five_hour: { utilization: 12, resets_at: '2026-10-05T20:00:00Z' },
+      seven_day: null,
+      extra_usage: { is_enabled: false, monthly_limit: null, used_credits: null, currency: null, decimal_places: null },
+    })
+    expect(meters).toEqual([{ name: '5H', percent: 12, resetsAt: '2026-10-05T20:00:00Z' }])
+  })
+  it('adds a monthly credit meter only when usage-based billing is on', () => {
+    const [month] = parseClaudeUsage({ extra_usage: { is_enabled: true, monthly_limit: 5000, used_credits: 1250, currency: 'USD', decimal_places: 2 } })
+    expect(month).toMatchObject({ name: 'MONTH', percent: 25, detail: '12.50 / 50.00 USD' })
+  })
+})
+
+describe('skills library', () => {
+  const library = () => {
+    const root = mkdtempSync(join(tmpdir(), 'swarm-skills-'))
+    mkdirSync(join(root, 'folded'))
+    writeFileSync(join(root, 'folded', 'SKILL.md'), '---\nname: folded\ndescription: >\n  First line\n  second line.\nlicense: MIT\n---\nbody')
+    mkdirSync(join(root, 'plain'))
+    writeFileSync(join(root, 'plain', 'SKILL.md'), '---\nname: plain\ndescription: "Quoted one"\n---\n')
+    mkdirSync(join(root, 'no-skill-md')) // not a skill: ignored
+    return root
+  }
+
+  it('reads plain, quoted and folded descriptions', () => {
+    expect(parseDescription('---\ndescription: >\n  a\n  b\nname: x\n---')).toBe('a b')
+    expect(parseDescription('---\ndescription: "q"\n---')).toBe('q')
+    expect(parseDescription('no frontmatter')).toBe('')
+  })
+  it('lists only folders that hold a SKILL.md', () => {
+    expect(listSkills(library()).map((s) => [s.name, s.description])).toEqual([
+      ['folded', 'First line second line.'],
+      ['plain', 'Quoted one'],
+    ])
+    expect(listSkills(join(tmpdir(), 'swarm-no-such-dir'))).toEqual([])
+  })
+  it('copies skills into the agent skill dir and refuses names outside the library', () => {
+    const lib = library()
+    const dir = mkdtempSync(join(tmpdir(), 'swarm-task-'))
+    seedSkills(lib, dir, 'claude', ['plain'])
+    expect(existsSync(join(dir, '.claude/skills/plain/SKILL.md'))).toBe(true)
+    expect(existsSync(join(dir, '.claude/skills/folded'))).toBe(false)
+    expect(() => seedSkills(lib, dir, 'claude', ['../../etc'])).toThrow(UserError)
+  })
+  it('imports one skill or a folder of skills without overwriting, and deletes by name', () => {
+    const lib = library()
+    const incoming = mkdtempSync(join(tmpdir(), 'swarm-incoming-'))
+    for (const n of ['x', 'y']) {
+      mkdirSync(join(incoming, n))
+      writeFileSync(join(incoming, n, 'SKILL.md'), `---\nname: ${n}\ndescription: d\n---\n`)
+    }
+    expect(importSkills(lib, join(incoming, 'x'))).toEqual(['x'])
+    expect(() => importSkills(lib, incoming)).toThrow(/Already in the collection: x/) // all or nothing
+    expect(listSkills(lib).map((s) => s.name)).not.toContain('y')
+    expect(() => importSkills(lib, 'relative/path')).toThrow(UserError)
+    expect(() => importSkills(lib, join(incoming, 'nothing-here'))).toThrow(UserError)
+    removeSkill(lib, 'x')
+    expect(importSkills(lib, incoming).sort()).toEqual(['x', 'y'])
+    expect(() => removeSkill(lib, '../..')).toThrow(UserError)
   })
 })

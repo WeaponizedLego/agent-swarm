@@ -3,11 +3,12 @@ import { mkdirSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { agentArgv, resolveBin } from './agents.ts'
-import { TASKS_DIR } from './config.ts'
+import { SKILLS_DIR, TASKS_DIR } from './config.ts'
 import { UserError } from './errors.ts'
 import { git } from './run.ts'
+import { catalog, seedSkills } from './skills.ts'
 import { classify, type AgentState } from './state.ts'
-import { loadSessions, loadWorkspaces, saveSessions, saveWorkspaces, type AgentId, type Session } from './store.ts'
+import { loadSessions, loadWorkspaces, saveEnabledSkills, saveSessions, saveWorkspaces, type AgentId, type Session } from './store.ts'
 import { terminals } from './terminals.ts'
 
 // Windows can hold a just-killed agent's files open for a moment; retry instead of failing the cleanup.
@@ -45,7 +46,7 @@ export function removeWorkspace(name: string) {
 
 // ---- sessions ----
 
-export async function createSession(input: { workspace: string; agent: AgentId; task: string }) {
+export async function createSession(input: { workspace: string; agent: AgentId; task: string; skills?: string[] }) {
   const repos = loadWorkspaces()[input.workspace]
   if (!repos?.length) throw new UserError(`Unknown or empty workspace: ${input.workspace}`)
   const slug = slugify(input.task)
@@ -63,11 +64,15 @@ export async function createSession(input: { workspace: string; agent: AgentId; 
       await git(repo, 'worktree', 'add', '-b', branch, worktree)
       created.push({ repo, worktree, branch })
     }
+    // Skills must be on disk before the agent starts: the CLIs read them at launch. No list means the saved ticks.
+    const skills = [...new Set(input.skills ?? catalog().filter((s) => s.enabled).map((s) => s.name))]
+    seedSkills(SKILLS_DIR, dir, input.agent, skills)
+    if (input.skills) saveEnabledSkills(skills)
     const handle = `swarm-${id}`
     await terminals.start(handle, dir, resolveBin(agentArgv(input.agent)))
     const session: Session = {
       id, task: input.task, workspace: input.workspace, agent: input.agent,
-      dir, handle, createdAt: new Date().toISOString(), repos: created,
+      dir, handle, createdAt: new Date().toISOString(), skills, repos: created,
     }
     saveSessions([...loadSessions(), session])
     return session

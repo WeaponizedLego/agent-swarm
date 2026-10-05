@@ -12,9 +12,11 @@
     <div class="shell">
       <header class="bar">
         <h1>AGENT-SWARM <span class="dim">// REV 0.2</span></h1>
+        <div id="usage" class="usage" aria-label="Plan usage"></div>
         <nav class="actions">
           <button id="new-session" class="btn primary">[ NEW SESSION ]</button>
           <button id="open-workspaces" class="btn">[ WORKSPACES ]</button>
+          <button id="open-skills" class="btn">[ SKILLS ]</button>
         </nav>
       </header>
 
@@ -73,6 +75,10 @@
           </select>
         </label>
         <label>TASK <input name="task" required maxlength="80" autocomplete="off" placeholder="add-login-rate-limit" /></label>
+        <fieldset class="skills">
+          <legend>SKILLS <span class="dim">(COPIED INTO THE SESSION; REMEMBERED FOR NEXT TIME)</span></legend>
+          <div id="skill-list"></div>
+        </fieldset>
         <div class="actions">
           <button type="button" class="btn" data-close>[ CANCEL ]</button>
           <button type="submit" class="btn primary">[ LAUNCH ]</button>
@@ -91,6 +97,21 @@
         <div class="actions">
           <button type="button" class="btn" data-close>[ CLOSE ]</button>
           <button type="submit" class="btn primary">[ SAVE ]</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-skills">
+      <h2 class="label">&gt;&gt;&gt; SKILLS <span id="skills-dir" class="dim"></span></h2>
+      <p class="dim pad">TICKED SKILLS ARE SEEDED INTO EVERY NEW SESSION. YOU CAN STILL CHANGE THE TICKS AT LAUNCH.</p>
+      <ul id="skill-manage" class="skill-manage"></ul>
+      <form id="form-skill-import">
+        <label>IMPORT FROM A FOLDER (ONE SKILL, OR A FOLDER OF SKILLS), ABSOLUTE PATH
+          <input name="path" required autocomplete="off" placeholder="~/.claude/skills" />
+        </label>
+        <div class="actions">
+          <button type="button" class="btn" data-close>[ CLOSE ]</button>
+          <button type="submit" class="btn primary">[ IMPORT ]</button>
         </div>
       </form>
     </dialog>

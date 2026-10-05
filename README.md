@@ -29,6 +29,28 @@ For the chat lane, `claude` must be logged in, or put a long-lived token in `.en
 mint one with `claude setup-token`). The token is only ever handed to the Haiku calls, never to agents
 or repo scripts.
 
+## Plan usage
+
+The header shows how much of your Claude plan is used (the 5-hour and 7-day windows, plus monthly credits if
+usage-based billing is on). Hover a bar for what is left and when it resets. It reads the login Claude Code
+already keeps in `~/.claude/.credentials.json` and asks Anthropic's (undocumented) usage endpoint, at most once a
+minute. The token is never logged or sent to the browser. If you are signed out or the login has expired, run
+`claude` once. On macOS the login lives in the keychain, so there is no usage display there yet. Codex and Kiro
+are not covered yet.
+
+## Skills
+
+The skill collection is a folder of skills, one subfolder each with a `SKILL.md` (this repo's `skills/` by default, or
+point `SWARM_SKILLS` elsewhere). **Skills** in the header manages it without a session: tick the skills that new
+sessions get by default, view a `SKILL.md`, delete a skill, or import one skill (or a folder of skills, such as
+`~/.claude/skills`) from a path. Import never overwrites a skill that is already there. To edit a skill, edit its
+folder in the collection with your editor.
+
+**New session** shows the same checkboxes. The ones you tick are copied into the session's task folder
+(`.claude/skills` for Claude Code) before the agent starts, so only those skills are loaded. Your ticks are
+remembered for the next launch (`~/.agent-swarm/skills.json`). It is a copy, so editing or deleting a skill later does
+not change a running session. Folders without a `SKILL.md` are not listed.
+
 ## How sessions run per OS
 
 - **macOS / Linux / WSL:** each agent lives in a tmux session. Sessions survive a server restart and
@@ -53,6 +75,7 @@ pnpm test                  # unit tests
 |---|---|---|
 | `PORT` | `4317` | |
 | `SWARM_HOME` | `~/.agent-swarm` | sessions, workspaces, lane history, task worktrees |
+| `SWARM_SKILLS` | this repo's `skills/` | the shared skill collection, see below |
 | `SWARM_HOST` | `tmux`, or `pty` on Windows | where agent terminals live |
 | `SWARM_CHATTER` | on | `off` disables the Haiku status observer |
 | `SWARM_HOUSE` | on | `off` disables the house keeper |

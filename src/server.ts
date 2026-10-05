@@ -5,14 +5,16 @@ import Fastify from 'fastify'
 import { z } from 'zod'
 import { Action, runAction } from './actions.ts'
 import { startChatter } from './chatter.ts'
-import { HOST, PORT } from './config.ts'
+import { HOST, PORT, SKILLS_DIR } from './config.ts'
 import { UserError } from './errors.ts'
 import { askHouse, startHouseKeeper } from './housekeeper.ts'
 import { post, since } from './lane.ts'
 import { overview } from './overview.ts'
 import { createSession, findSession, listSessions, removeSession, removeWorkspace, setWorkspace } from './sessions.ts'
-import { AgentId, loadWorkspaces } from './store.ts'
+import { catalog, importSkills, readSkill, removeSkill } from './skills.ts'
+import { AgentId, loadEnabledSkills, loadWorkspaces, saveEnabledSkills } from './store.ts'
 import { TERMINAL_HOST, terminals } from './terminals.ts'
+import { getUsage } from './usage.ts'
 
 const root = (p: string) => fileURLToPath(new URL(p, import.meta.url))
 const app = Fastify({ logger: { level: 'warn' } })
@@ -53,8 +55,39 @@ app.delete('/api/workspaces/:name', async (req) => {
   return loadWorkspaces()
 })
 
+// ---- skills: the shared collection, managed here and seeded into sessions at launch ----
+app.get('/api/skills', async () => ({ dir: SKILLS_DIR, skills: catalog() }))
+app.get('/api/skills/:name', async (req) => {
+  const { name } = z.object({ name: z.string() }).parse(req.params)
+  return { name, content: readSkill(SKILLS_DIR, name) }
+})
+// The saved ticks: what the next launch starts from. Names no longer in the collection are dropped.
+app.put('/api/skills/enabled', async (req) => {
+  const { names } = z.object({ names: z.array(z.string()) }).parse(req.body)
+  const known = new Set(catalog().map((s) => s.name))
+  saveEnabledSkills(names.filter((n) => known.has(n)))
+  return { dir: SKILLS_DIR, skills: catalog() }
+})
+app.post('/api/skills/import', async (req) => {
+  const { path } = z.object({ path: z.string().trim().min(1) }).parse(req.body)
+  importSkills(SKILLS_DIR, path)
+  return { dir: SKILLS_DIR, skills: catalog() }
+})
+app.delete('/api/skills/:name', async (req) => {
+  const { name } = z.object({ name: z.string() }).parse(req.params)
+  removeSkill(SKILLS_DIR, name)
+  saveEnabledSkills(loadEnabledSkills().filter((n) => n !== name)) // a skill re-added later starts unticked
+  return { dir: SKILLS_DIR, skills: catalog() }
+})
+
 // ---- sessions ----
-const CreateSession = z.object({ workspace: z.string(), agent: AgentId, task: z.string().trim().min(1).max(80) })
+// `skills` omitted means "the saved ticks"; a list replaces them for this and the next launch.
+const CreateSession = z.object({
+  workspace: z.string(),
+  agent: AgentId,
+  task: z.string().trim().min(1).max(80),
+  skills: z.array(z.string()).optional(),
+})
 app.get('/api/sessions', async () => listSessions())
 app.post('/api/sessions', async (req, reply) => reply.code(201).send(await createSession(CreateSession.parse(req.body))))
 app.delete('/api/sessions/:id', async (req, reply) => {
@@ -90,6 +123,9 @@ app.post('/api/lane', async (req, reply) => {
   askHouse(text)
   return reply.code(201).send(message)
 })
+
+// ---- plan usage: how much of each agent's plan (or monthly credits) is used ----
+app.get('/api/usage', async () => getUsage())
 
 // ---- live terminal: view and steer are the same stream ----
 const WsMessage = z.discriminatedUnion('t', [

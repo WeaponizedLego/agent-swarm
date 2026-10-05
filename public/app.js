@@ -12,8 +12,10 @@ const h = (tag, props = {}, ...kids) => {
 const els = {
   list: $('sessions'), count: $('count'), empty: $('empty'), meta: $('meta'), fields: $('meta-fields'),
   term: $('term'), overview: $('overview'), tabs: $('tabs'), placeholder: $('placeholder'), status: $('status'),
-  dlgSession: $('dlg-session'), formSession: $('form-session'),
+  dlgSession: $('dlg-session'), formSession: $('form-session'), skillList: $('skill-list'),
   dlgWs: $('dlg-workspaces'), formWs: $('form-workspace'), wsList: $('workspace-list'),
+  stage: document.querySelector('.stage'),
+  usage: $('usage'),
   laneList: $('lane-list'), laneForm: $('lane-form'), laneInput: $('lane-input'), laneEmpty: $('lane-empty'), laneFilter: $('lane-filter'),
 }
 
@@ -39,12 +41,51 @@ async function api(path, options = {}) {
   return body
 }
 
+// ---- session colours ----
+// Every session gets its own hue: the lowest palette slot no live session holds. The choice is remembered in
+// localStorage, so a reload or another session ending never repaints the rest.
+const PALETTE = [20, 55, 90, 125, 165, 200, 235, 270, 305, 335].map((hue) => `oklch(0.78 0.13 ${hue})`)
+let slots = {}
+try {
+  slots = JSON.parse(localStorage.getItem('swarm-colours') ?? '{}')
+} catch {
+  /* private mode or blocked storage: colours still work, they just reset on reload */
+}
+
+// Sessions that are gone (old lane history) fall back to a hue derived from the id.
+const colourOf = (id) => PALETTE[slots[id] ?? [...id].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % PALETTE.length]
+
+function assignColours() {
+  const taken = new Set(sessions.map((s) => slots[s.id]))
+  let changed = false
+  for (const s of sessions) {
+    if (slots[s.id] != null) continue
+    const free = PALETTE.findIndex((_, i) => !taken.has(i))
+    slots[s.id] = free < 0 ? sessions.length % PALETTE.length : free // more sessions than colours: reuse
+    taken.add(slots[s.id])
+    changed = true
+  }
+  if (changed) {
+    try {
+      localStorage.setItem('swarm-colours', JSON.stringify(slots))
+    } catch {
+      /* see above */
+    }
+  }
+  return changed
+}
+
 // ---- terminal ----
 const term = new Terminal({
   cursorBlink: true,
   fontFamily: 'ui-monospace, "JetBrains Mono", Menlo, monospace',
   fontSize: 13,
-  theme: { background: '#0a0a0a', foreground: '#eaeaea', cursor: '#eaeaea' },
+  // Same Tokyo Night palette as the page, so agent output that uses ANSI colours is readable too.
+  theme: {
+    background: '#16161e', foreground: '#c0caf5', cursor: '#c0caf5', selectionBackground: '#33467c',
+    black: '#15161e', red: '#f7768e', green: '#9ece6a', yellow: '#e0af68', blue: '#7aa2f7', magenta: '#bb9af7', cyan: '#7dcfff', white: '#a9b1d6',
+    brightBlack: '#565f89', brightRed: '#ff899d', brightGreen: '#b9f27c', brightYellow: '#ffc777', brightBlue: '#9ab8ff', brightMagenta: '#d0b4ff', brightCyan: '#a4daff', brightWhite: '#c0caf5',
+  },
 })
 const fit = new FitAddon()
 term.loadAddon(fit)
@@ -115,6 +156,7 @@ function render() {
         state,
       )
       btn.setAttribute('aria-current', String(s.id === selected))
+      btn.style.setProperty('--c', colourOf(s.id))
       return h('li', {}, btn)
     }),
   )
@@ -122,9 +164,11 @@ function render() {
   const current = sessions.find((s) => s.id === selected)
   els.meta.hidden = !current
   els.tabs.hidden = !current
+  if (current) els.stage.style.setProperty('--c', colourOf(current.id))
+  else els.stage.style.removeProperty('--c')
   if (current) {
     els.fields.replaceChildren(
-      ...[['DIR', current.dir], ['BRANCH', current.repos[0]?.branch ?? ''], ['SESSION', current.handle]].flatMap(([k, v]) => [
+      ...[['DIR', current.dir], ['BRANCH', current.repos[0]?.branch ?? ''], ['SESSION', current.handle], ['SKILLS', current.skills.join(', ') || 'none']].flatMap(([k, v]) => [
         h('dt', { textContent: k }),
         h('dd', { textContent: v }),
       ]),
@@ -143,7 +187,9 @@ async function refresh() {
       els.overview.replaceChildren()
       setTab('term')
     }
+    const recoloured = assignColours()
     render()
+    if (recoloured) renderLane() // lane lines drawn before their session was known used a fallback colour
   } catch (err) {
     say(err.message, true)
   }
@@ -332,6 +378,7 @@ function renderLane() {
       prev = m
       const alert = m.text.startsWith('needs you:') || m.text.startsWith('heads up:') || m.kind === 'system'
       const li = h('li', { className: `msg ${m.kind}${sameAsPrev ? '' : ' head'}` })
+      if (m.kind !== 'house' && m.kind !== 'user') li.style.setProperty('--c', colourOf(m.sessionId)) // house and you stay neutral
       if (!sameAsPrev) {
         const opens = m.kind !== 'house' && m.kind !== 'user' && sessions.some((s) => s.id === m.sessionId)
         const avatar = h('button', { type: 'button', className: 'avatar', textContent: letter(m), tabIndex: opens ? 0 : -1, onclick: () => opens && select(m.sessionId) })
@@ -381,6 +428,41 @@ els.laneFilter.onclick = () => {
   renderLane()
 }
 
+// ---- plan usage ----
+const level = (percent) => (percent >= 90 ? 'hot' : percent >= 70 ? 'warn' : 'ok')
+
+function resetsIn(iso) {
+  const mins = Math.max(0, Math.round((new Date(iso) - Date.now()) / 60_000))
+  const days = Math.floor(mins / 1440)
+  const hours = Math.floor((mins % 1440) / 60)
+  return days ? `${days}d ${hours}h` : hours ? `${hours}h ${mins % 60}m` : `${mins}m`
+}
+
+function meterEl(agent, m) {
+  const percent = Math.min(100, Math.round(m.percent))
+  const tip = [`${percent}% used`, `${100 - percent}% left`, m.detail, m.resetsAt && `resets in ${resetsIn(m.resetsAt)}`].filter(Boolean).join(', ')
+  const el = h('span', { className: 'meter', title: tip }, m.name, h('span', { className: 'track' }, h('span', { className: 'fill', style: `width:${percent}%` })), `${percent}%${m.detail ? ` (${m.detail})` : ''}`)
+  el.dataset.level = level(percent)
+  // A meter's children are presentational, so the label has to carry the whole reading.
+  el.setAttribute('role', 'meter')
+  el.setAttribute('aria-label', `${agent} ${m.name}: ${tip}`)
+  el.setAttribute('aria-valuemin', '0')
+  el.setAttribute('aria-valuemax', '100')
+  el.setAttribute('aria-valuenow', String(percent))
+  return el
+}
+
+async function refreshUsage() {
+  try {
+    const usage = await api('/api/usage')
+    els.usage.replaceChildren(
+      ...usage.map((u) => h('span', { className: 'usage-agent' }, h('b', { textContent: u.agent }), ...(u.error ? [h('span', { className: 'dim', textContent: u.error })] : u.meters.map((m) => meterEl(u.agent, m))))),
+    )
+  } catch {
+    /* the sessions poll already surfaces connection errors */
+  }
+}
+
 // ---- new session dialog ----
 $('new-session').onclick = async () => {
   workspaces = await api('/api/workspaces')
@@ -390,6 +472,17 @@ $('new-session').onclick = async () => {
     return openWorkspaces()
   }
   els.formSession.workspace.replaceChildren(...names.map((n) => new Option(`${n} (${workspaces[n].length})`, n)))
+  const { skills } = await api('/api/skills')
+  els.skillList.replaceChildren(
+    ...(skills.length
+      ? skills.map((s) =>
+          h('label', { className: 'skill', title: s.description },
+            h('input', { type: 'checkbox', name: 'skill', value: s.name, checked: s.enabled }),
+            h('span', {}, h('b', { textContent: s.name }), h('span', { className: 'dim', textContent: s.description })),
+          ),
+        )
+      : [h('p', { className: 'dim', textContent: 'NO SKILLS FOUND. ADD FOLDERS WITH A SKILL.md TO THE SKILLS DIR (SWARM_SKILLS).' })]),
+  )
   els.dlgSession.showModal()
   els.formSession.task.focus()
 }
@@ -401,13 +494,87 @@ els.formSession.onsubmit = async (e) => {
   try {
     const s = await api('/api/sessions', {
       method: 'POST',
-      body: JSON.stringify({ workspace: f.workspace.value, agent: f.agent.value, task: f.task.value }),
+      body: JSON.stringify({
+        workspace: f.workspace.value,
+        agent: f.agent.value,
+        task: f.task.value,
+        skills: [...els.skillList.querySelectorAll('input:checked')].map((i) => i.value),
+      }),
     })
     els.dlgSession.close()
     f.reset()
     await refresh()
     select(s.id)
     say(`LAUNCHED ${s.task}`)
+  } catch (err) {
+    say(err.message, true)
+  }
+}
+
+// ---- skills dialog: manage the shared collection without a session ----
+const skillsDlg = { dlg: $('dlg-skills'), list: $('skill-manage'), dir: $('skills-dir'), form: $('form-skill-import') }
+
+function renderSkills({ dir, skills }) {
+  skillsDlg.dir.textContent = dir
+  const ticked = () => [...skillsDlg.list.querySelectorAll('input[type=checkbox]:checked')].map((i) => i.value)
+  skillsDlg.list.replaceChildren(
+    ...(skills.length
+      ? skills.map((s) => {
+          const body = h('pre', { className: 'skill-body', hidden: true })
+          const view = h('button', {
+            type: 'button', className: 'btn small', textContent: '[ VIEW ]',
+            onclick: async () => {
+              if (body.hidden && !body.textContent) body.textContent = (await api(`/api/skills/${encodeURIComponent(s.name)}`)).content
+              body.hidden = !body.hidden
+            },
+          })
+          const del = h('button', {
+            type: 'button', className: 'btn small danger', textContent: '[ DELETE ]',
+            onclick: async () => {
+              if (!confirm(`Delete skill "${s.name}" from the collection? This removes its folder and cannot be undone. Running sessions keep their copy.`)) return
+              try {
+                renderSkills(await api(`/api/skills/${encodeURIComponent(s.name)}`, { method: 'DELETE' }))
+              } catch (err) {
+                say(err.message, true)
+              }
+            },
+          })
+          const tick = h('input', {
+            type: 'checkbox', value: s.name, checked: s.enabled,
+            onchange: async () => {
+              try {
+                await api('/api/skills/enabled', { method: 'PUT', body: JSON.stringify({ names: ticked() }) })
+              } catch (err) {
+                tick.checked = !tick.checked
+                say(err.message, true)
+              }
+            },
+          })
+          return h('li', {},
+            h('label', { className: 'skill' }, tick, h('span', {}, h('b', { textContent: s.name }), h('span', { className: 'dim', textContent: s.description }))),
+            h('div', { className: 'actions' }, view, del),
+            body,
+          )
+        })
+      : [h('li', { className: 'dim', textContent: 'NO SKILLS YET. IMPORT SOME BELOW.' })]),
+  )
+}
+
+$('open-skills').onclick = async () => {
+  try {
+    renderSkills(await api('/api/skills'))
+    if (!skillsDlg.dlg.open) skillsDlg.dlg.showModal()
+  } catch (err) {
+    say(err.message, true)
+  }
+}
+
+skillsDlg.form.onsubmit = async (e) => {
+  e.preventDefault()
+  try {
+    renderSkills(await api('/api/skills/import', { method: 'POST', body: JSON.stringify({ path: skillsDlg.form.path.value }) }))
+    skillsDlg.form.reset()
+    say('SKILLS IMPORTED')
   } catch (err) {
     say(err.message, true)
   }
@@ -452,5 +619,7 @@ document.querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => b.cl
 
 refresh()
 pollLane()
+refreshUsage()
 setInterval(refresh, 2000)
 setInterval(pollLane, 2000)
+setInterval(refreshUsage, 60_000)

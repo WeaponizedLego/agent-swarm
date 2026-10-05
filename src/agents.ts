@@ -3,7 +3,12 @@ import { join } from 'node:path'
 import { UserError } from './errors.ts'
 import type { AgentId } from './store.ts'
 
-const BIN: Record<AgentId, string[]> = { claude: ['claude'], codex: ['codex'], kiro: ['kiro-cli', 'chat'] }
+// Claude sessions start pinned to Opus 5.5 (full id, so the `opus` alias moving on does not change it) in auto mode.
+const BIN: Record<AgentId, string[]> = {
+  claude: ['claude', '--model', 'claude-opus-5-5', '--permission-mode', 'auto'],
+  codex: ['codex'],
+  kiro: ['kiro-cli', 'chat'],
+}
 
 /**
  * Interactive command line per agent. Each starts in the task dir, which holds one worktree

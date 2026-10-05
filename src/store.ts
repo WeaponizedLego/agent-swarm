@@ -14,6 +14,7 @@ const Session = z.object({
   dir: z.string(),
   handle: z.string(), // the session's name in tmux, or in the in-process terminal host on Windows
   createdAt: z.string(),
+  skills: z.array(z.string()).default([]), // seeded into the task dir at launch
   repos: z.array(z.object({ repo: z.string(), worktree: z.string(), branch: z.string() })),
 })
 export type Session = z.infer<typeof Session>
@@ -40,6 +41,9 @@ function save(file: string, data: unknown) {
   renameSync(`${target}.tmp`, target)
 }
 
+// The skills ticked at the last launch: the next launch starts from the same ticks.
+export const loadEnabledSkills = () => load('skills.json', z.array(z.string()), [])
+export const saveEnabledSkills = (names: string[]) => save('skills.json', names)
 export const loadSessions = () => load('sessions.json', z.array(Session), [])
 export const saveSessions = (s: Session[]) => save('sessions.json', s)
 export const loadWorkspaces = () => load('workspaces.json', Workspaces, {})
