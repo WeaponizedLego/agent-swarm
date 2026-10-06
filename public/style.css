@@ -101,33 +101,83 @@ body {
 .placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 0.4em; margin: 0; font: 900 clamp(1.5rem, 4vw, 3.5rem)/0.9 var(--mono); letter-spacing: -0.04em; color: var(--line); }
 .placeholder[hidden] { display: none; }
 
-dialog { background: var(--bg); color: var(--fg); border: 1px solid var(--accent); padding: 0; width: min(520px, 92vw); font: inherit; letter-spacing: inherit; text-transform: inherit; }
-dialog::backdrop { background: rgba(10, 10, 20, 0.7); }
-dialog form, dialog > ul { padding: 16px; display: grid; gap: 12px; }
-dialog label { display: grid; gap: 4px; color: var(--dim); font-size: 11px; }
-dialog input, dialog select, dialog textarea {
-  font: 12px var(--mono); letter-spacing: 0.05em; color: var(--fg); background: var(--panel);
-  border: 1px solid var(--line); padding: 8px; text-transform: none; width: 100%;
-}
-dialog .actions { justify-content: flex-end; }
-dialog fieldset.skills { border: 1px solid var(--line); margin: 0; padding: 8px; min-width: 0; color: var(--dim); font-size: 11px; }
-dialog fieldset.skills > div { display: grid; gap: 6px; max-height: 220px; overflow-y: auto; }
-.skill-manage { list-style: none; margin: 0; padding: 16px; display: grid; gap: 8px; max-height: 50vh; overflow-y: auto; }
-.skill-manage li { border: 1px solid var(--line); padding: 8px; display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start; }
-.skill-manage .skill-body { grid-column: 1 / -1; margin: 0; max-height: 240px; overflow: auto; background: var(--panel); padding: 8px; font-size: 11px; white-space: pre-wrap; text-transform: none; }
-dialog .pad { padding: 12px 16px 0; margin: 0; font-size: 11px; }
-dialog label.skill { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
-dialog label.skill input { width: auto; margin: 2px 0 0; flex: none; }
-dialog label.skill span { display: grid; gap: 2px; min-width: 0; }
-dialog label.skill b { font-weight: 700; color: var(--fg); text-transform: none; }
-dialog label.skill .dim { text-transform: none; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.workspaces { list-style: none; margin: 0; display: grid; gap: 8px; }
-.workspaces li { border: 1px solid var(--line); padding: 8px; display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
-.workspaces .repos { color: var(--dim); font-size: 11px; text-transform: none; word-break: break-all; }
 
 #status.error { color: var(--red); }
 
 [hidden] { display: none !important; }
+
+/* views (new session, workspaces, skills) cover the stage instead of popping a modal; the lane and rail stay in sight.
+   The skills and workspaces views are list-on-the-left, detail-on-the-right. */
+.btn:not(.primary)[aria-pressed='true'] { border-color: var(--accent); color: var(--accent); }
+.view { position: absolute; inset: 0; z-index: 2; background: var(--bg); display: grid; grid-template-rows: auto 1fr; min-height: 0; }
+.view-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+.view-head h2 { margin: 0; font-size: 13px; font-weight: 700; color: var(--label); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.view-head h2 .dim { font-weight: 400; text-transform: none; margin-left: 8px; }
+.lib-cols { display: grid; grid-template-columns: minmax(280px, 380px) 1fr; min-height: 0; }
+.lib-list { display: grid; grid-template-rows: auto auto 1fr auto; gap: 10px; padding: 16px; border-right: 1px solid var(--line); min-height: 0; }
+.lib-list > p { margin: 0; font-size: 11px; }
+.lib-list input, .lib-import input { font: 13px var(--mono); color: var(--fg); background: var(--panel); border: 1px solid var(--line); padding: 8px 10px; text-transform: none; width: 100%; }
+.lib-items { list-style: none; margin: 0; padding: 0; overflow-y: auto; min-height: 0; display: grid; align-content: start; gap: 4px; }
+.lib-items li { display: grid; grid-template-columns: auto 1fr; align-items: start; border: 1px solid var(--line); }
+.lib-items li:has([aria-current='true']) { border-color: var(--accent); background: var(--panel); }
+.lib-items input[type=checkbox] { width: 18px; height: 18px; margin: 12px 0 0 12px; accent-color: var(--accent); cursor: pointer; }
+.lib-items .pick { font: inherit; letter-spacing: 0.02em; text-transform: none; text-align: left; color: inherit; background: transparent; border: 0; padding: 10px 12px; cursor: pointer; display: grid; gap: 4px; min-width: 0; }
+.lib-items .pick:hover b { color: var(--accent); }
+.lib-items .pick b { font-size: 14px; color: var(--fg); }
+.lib-items .pick span { font-size: 12px; color: var(--dim); line-height: 1.45; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.lib-import { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.lib-import label { display: grid; gap: 4px; color: var(--dim); font-size: 11px; }
+.lib-detail { overflow-y: auto; min-height: 0; padding: 24px 32px; text-transform: none; letter-spacing: 0.01em; }
+.lib-detail > * { max-width: 88ch; }
+.lib-detail h3 { margin: 0 0 8px; font: 900 22px/1.2 var(--mono); letter-spacing: -0.02em; color: var(--accent); }
+.lib-detail .desc { margin: 0 0 20px; padding-bottom: 20px; border-bottom: 1px solid var(--line); font-size: 14px; line-height: 1.55; color: var(--fg); }
+.lib-detail .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding: 4px 0 16px; }
+.lib-detail .controls label { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+.lib-detail .controls input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
+.lib-detail .controls .btn { margin-left: auto; }
+.lib-detail pre { margin: 0; font: 13px/1.65 var(--mono); white-space: pre-wrap; word-break: break-word; color: var(--fg); }
+@media (max-width: 760px) {
+  .lib-cols { grid-template-columns: 1fr; grid-template-rows: minmax(0, 45%) 1fr; }
+  .lib-list { border-right: 0; border-bottom: 1px solid var(--line); }
+  .lib-detail, .launch-body { padding: 16px; }
+  .launch-row { grid-template-columns: 1fr; }
+}
+
+/* shared form fields inside views */
+.field { display: grid; gap: 6px; color: var(--dim); font-size: 11px; }
+.field input, .field select, .field textarea {
+  font: 14px var(--mono); letter-spacing: 0.02em; color: var(--fg); background: var(--panel);
+  border: 1px solid var(--line); padding: 10px 12px; text-transform: none; width: 100%;
+}
+.field textarea { resize: vertical; line-height: 1.6; }
+
+/* new session */
+.launch { display: grid; grid-template-rows: 1fr auto; min-height: 0; }
+.launch-body { overflow-y: auto; min-height: 0; padding: 24px 32px; display: grid; gap: 20px; align-content: start; }
+.launch-body > * { max-width: 960px; }
+.field.task input { font-size: 18px; padding: 12px 14px; }
+.launch-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.launch-skills { border: 0; margin: 0; padding: 0; min-width: 0; }
+.launch-skills legend { padding: 0 0 8px; color: var(--dim); font-size: 11px; }
+.launch-skills legend .dim { margin-left: 8px; }
+#skill-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+label.skill { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); cursor: pointer; }
+label.skill:hover { border-color: var(--accent); }
+label.skill:has(input:checked) { background: var(--panel); border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); }
+label.skill input { width: 18px; height: 18px; margin: 0; flex: none; accent-color: var(--accent); }
+label.skill span { display: grid; gap: 4px; min-width: 0; text-transform: none; letter-spacing: 0.02em; }
+label.skill b { font-size: 14px; color: var(--fg); }
+label.skill .dim { font-size: 12px; line-height: 1.45; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.view-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 32px; border-top: 1px solid var(--line); }
+
+/* workspaces */
+.lib-list:has(#workspace-new) { grid-template-rows: auto 1fr; }
+.lib-items .repos { font-size: 12px; color: var(--dim); white-space: pre-line; word-break: break-all; }
+.lib-items li:has(.ws) { grid-template-columns: 1fr; }
+.ws-form { display: grid; gap: 16px; align-content: start; }
+.ws-form h3 { margin: 0; }
+.ws-form .controls { padding: 0; }
+.ws-form .controls .btn.primary { margin-left: 0; }
 
 /* tabs */
 .tabs { display: flex; border-bottom: 1px solid var(--line); }
@@ -194,4 +244,63 @@ dialog label.skill .dim { text-transform: none; overflow: hidden; display: -webk
 @media (max-width: 760px) {
   .shell { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr 240px auto; }
   .rail { max-height: 30vh; }
+}
+
+/* changes: the change-map story, laid out like an overview repo card. --k carries a kind's or status's colour. */
+.changes .repo, .changes .repo section, .changes .repo section > * { min-width: 0; } /* long diff lines scroll inside their box instead of widening the panel */
+.cm-file { white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.changes .repo > header h3 { font-size: 16px; text-transform: none; }
+.cm-text { text-transform: none; letter-spacing: 0.01em; font-size: 13px; line-height: 1.55; margin: 0; }
+.cm-text code, .cm-card code { background: var(--raised); padding: 0 4px; }
+.cm-tldr { font-size: 14px; max-width: 88ch; }
+.cm-base { margin: 0; font-size: 11px; text-transform: none; }
+.cm-warn { border-left: 3px solid var(--red); }
+.cm-warn p { margin: 0; }
+.cm-hot { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+.cm-hot li::marker { color: var(--dim); }
+button.chip { font: inherit; letter-spacing: inherit; color: var(--fg); cursor: pointer; }
+button.chip:hover { border-color: var(--accent); color: var(--accent); }
+.cm-file { --k: var(--dim); box-shadow: inset 3px 0 0 var(--k); padding-left: 8px; }
+.cm-file .cm-k { color: var(--k); font-weight: 700; }
+.cm-add { color: var(--green); font-weight: 400; }
+.cm-del { color: var(--red); font-weight: 400; }
+.cm-hunk { color: var(--label); }
+.cm-fig { margin: 0; border: 1px solid var(--line); background: var(--panel); padding: 12px; overflow-x: auto; }
+.cm-fig figcaption { margin-bottom: 10px; text-transform: none; font-size: 12px; }
+.cm-fig figcaption b { color: var(--fg); text-transform: uppercase; margin-right: 4px; }
+.cm-mermaid { margin: 0; text-align: center; text-transform: none; font: 12px/1.4 var(--mono); color: var(--dim); white-space: pre-wrap; }
+.cm-legend { font-size: 11px; color: var(--dim); }
+.cm-legend > span[style]::before { content: '\25A0\00a0'; color: var(--k); }
+.cm-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px; }
+.cm-card { --k: var(--dim); border: 1px solid var(--line); box-shadow: inset 3px 0 0 var(--k); padding: 10px 12px 12px 15px; display: grid; gap: 8px; align-content: start; }
+.cm-tag { display: flex; justify-content: space-between; gap: 8px; color: var(--k); font-size: 11px; font-weight: 700; }
+.cm-risk { color: var(--k); font-weight: 400; }
+.cm-risk::before { content: '\25A0\00a0'; }
+.cm-card h5 { margin: 0; font: 700 14px/1.3 var(--mono); letter-spacing: 0; text-transform: none; color: var(--fg); }
+.cm-card .row { flex-direction: column; align-items: flex-start; gap: 4px; }
+.cm-ba { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; text-transform: none; font-size: 12px; }
+.cm-ba > div { background: var(--panel); border: 1px solid var(--line); padding: 6px 8px; min-width: 0; word-break: break-word; }
+.cm-syms { font-size: 11px; text-transform: none; word-break: break-word; }
+.cm-mosaic { display: grid; gap: 4px; }
+.cm-row { display: grid; grid-template-columns: minmax(80px, 220px) 1fr; gap: 10px; align-items: center; }
+.cm-dir { font-size: 11px; text-transform: none; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cm-tiles { display: flex; flex-wrap: wrap; gap: 4px; }
+.cm-tile {
+  --k: var(--dim); min-width: 72px; height: 28px; padding: 0 8px; cursor: pointer; text-align: left;
+  font: 11px var(--mono); letter-spacing: 0; color: var(--fg); background: color-mix(in srgb, var(--k) 14%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--k) 45%, var(--line)); box-shadow: inset 3px 0 0 var(--k);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cm-tile:hover { border-color: var(--k); }
+.cm-tile.lost { border-style: dashed; border-color: var(--red); }
+.cm-check { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.cm-check input { width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--accent); flex: none; }
+.cm-check:has(input:checked) .cm-text { color: var(--dim); text-decoration: line-through; }
+.cm-diff summary { cursor: pointer; display: flex; align-items: center; gap: 6px; list-style-position: inside; }
+.cm-diff summary::marker { color: var(--dim); }
+.cm-diff .output { margin-top: 6px; max-height: 480px; white-space: pre; }
+@media (max-width: 760px) {
+  .cm-row { grid-template-columns: 1fr; }
+  .cm-dir { text-align: left; }
+  .cm-ba { grid-template-columns: 1fr; }
 }

@@ -4,6 +4,7 @@ import websocket from '@fastify/websocket'
 import Fastify from 'fastify'
 import { z } from 'zod'
 import { Action, runAction } from './actions.ts'
+import { changeMap } from './changes.ts'
 import { startChatter } from './chatter.ts'
 import { HOST, PORT, SKILLS_DIR } from './config.ts'
 import { UserError } from './errors.ts'
@@ -41,6 +42,7 @@ app.setErrorHandler((err: Error & { statusCode?: number }, _req, reply) => {
 await app.register(websocket)
 await app.register(fastifyStatic, { root: root('../public') })
 await app.register(fastifyStatic, { root: root('../node_modules/@xterm'), prefix: '/vendor/', decorateReply: false })
+await app.register(fastifyStatic, { root: root('../node_modules/mermaid/dist'), prefix: '/vendor-mermaid/', decorateReply: false })
 
 // ---- workspaces ----
 app.get('/api/workspaces', async () => loadWorkspaces())
@@ -102,6 +104,13 @@ app.get('/api/sessions/:id/overview', async (req) => {
   const session = findSession(id)
   if (!session) throw new UserError('No such session')
   return overview(session)
+})
+// What the session changed, as written by the change-map skill. Read-only: the agent produces it, the page draws it.
+app.get('/api/sessions/:id/changes', async (req) => {
+  const { id } = z.object({ id: z.string() }).parse(req.params)
+  const session = findSession(id)
+  if (!session) throw new UserError('No such session')
+  return changeMap(session)
 })
 app.post('/api/sessions/:id/repos/:repo/actions', async (req) => {
   const { id, repo } = z.object({ id: z.string(), repo: z.string() }).parse(req.params)

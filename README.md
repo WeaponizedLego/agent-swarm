@@ -51,6 +51,10 @@ folder in the collection with your editor.
 remembered for the next launch (`~/.agent-swarm/skills.json`). It is a copy, so editing or deleting a skill later does
 not change a running session. Folders without a `SKILL.md` are not listed.
 
+**Changes** in a session shows what its agent changed, written by the `change-map` skill: cards by intent, a diagram
+of the parts that moved, where the edits landed, and the raw diff. Tick `change-map` at launch, then ask the agent for
+a map (the tab has a button for it).
+
 ## How sessions run per OS
 
 - **macOS / Linux / WSL:** each agent lives in a tmux session. Sessions survive a server restart and

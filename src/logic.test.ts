@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { agentArgv, launchArgv, resolveBin } from './agents.ts'
+import { coverage } from './changes.ts'
 import { UserError } from './errors.ts'
 import { cleanBlock, parseLine } from './haiku.ts'
 import { findOverlaps } from './housekeeper.ts'
@@ -193,5 +194,23 @@ describe('skills library', () => {
     removeSkill(lib, 'x')
     expect(importSkills(lib, incoming).sort()).toEqual(['x', 'y'])
     expect(() => removeSkill(lib, '../..')).toThrow(UserError)
+  })
+})
+
+describe('change map coverage', () => {
+  const file = (path: string) => ({ path, status: 'M', add: 1, del: 0, symbols: { added: [], removed: [], changed: [] }, patch: [] })
+  const repo = (name: string, paths: string[]) => ({ name, branch: 'swarm/x', base: 'abc', how: '', commits: [], files: paths.map(file) })
+  const story = (files: string[], hot: string[] = []) => ({
+    title: '', tldr: '', diagrams: [], verify: [],
+    changes: [{ kind: 'fix', title: 't', files }],
+    hotspots: hot.map((f) => ({ file: f, why: '' })),
+  })
+  it('flags changed files no card explains and named files that did not change', () => {
+    const facts = { generatedAt: '', repos: [repo('api', ['a.ts', 'b.ts'])] }
+    expect(coverage(facts, story(['a.ts'], ['ghost.ts']))).toEqual({ unexplained: ['b.ts'], phantom: ['ghost.ts'] })
+  })
+  it('prefixes paths with the repo once a task spans several repos', () => {
+    const facts = { generatedAt: '', repos: [repo('api', ['a.ts']), repo('web', ['a.ts'])] }
+    expect(coverage(facts, story(['api/a.ts']))).toEqual({ unexplained: ['web/a.ts'], phantom: [] })
   })
 })

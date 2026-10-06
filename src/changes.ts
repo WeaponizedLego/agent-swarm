@@ -1,0 +1,86 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { z } from 'zod'
+import type { Session } from './store.ts'
+
+// The change-map skill writes these into the task dir: facts.json from git, story.json from the agent.
+// Both are agent-written, so they are parsed, never trusted, and the page only ever sets them as text.
+const Names = z.array(z.string()).default([])
+const File = z.object({
+  path: z.string(),
+  from: z.string().optional(),
+  status: z.string(),
+  add: z.number(),
+  del: z.number(),
+  binary: z.boolean().optional(),
+  untracked: z.boolean().optional(),
+  symbols: z.object({ added: Names, removed: Names, changed: Names }).default({ added: [], removed: [], changed: [] }),
+  patch: z.array(z.string()).default([]),
+  truncated: z.boolean().optional(),
+})
+const Facts = z.object({
+  generatedAt: z.string(),
+  repos: z.array(
+    z.object({
+      name: z.string(),
+      branch: z.string(),
+      base: z.string(),
+      how: z.string(),
+      commits: z.array(z.object({ sha: z.string(), subject: z.string() })).default([]),
+      files: z.array(File),
+    }),
+  ),
+})
+const Story = z.object({
+  title: z.string().default(''),
+  tldr: z.string().default(''),
+  changes: z
+    .array(
+      z.object({
+        kind: z.string().default('chore'),
+        title: z.string(),
+        what: z.string().optional(),
+        why: z.string().optional(),
+        before: z.string().optional(),
+        after: z.string().optional(),
+        risk: z.enum(['low', 'medium', 'high']).optional(),
+        files: Names,
+      }),
+    )
+    .default([]),
+  diagrams: z.array(z.object({ title: z.string(), caption: z.string().optional(), mermaid: z.string() })).default([]),
+  hotspots: z.array(z.object({ file: z.string(), line: z.number().optional(), why: z.string() })).default([]),
+  verify: Names,
+})
+export type Facts = z.infer<typeof Facts>
+export type Story = z.infer<typeof Story>
+
+const read = <T,>(schema: z.ZodType<T>, file: string) => {
+  let raw: string
+  try {
+    raw = readFileSync(file, 'utf8')
+  } catch {
+    return null // not written yet
+  }
+  const parsed = schema.safeParse(JSON.parse(raw))
+  if (!parsed.success) throw new Error(`${file} is malformed: ${parsed.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}`)
+  return parsed.data
+}
+
+/** Each changed file under the name the story uses for it: repo-prefixed only when the task spans several repos. */
+export const fileKey = (facts: Facts, repo: string, path: string) => (facts.repos.length > 1 ? `${repo}/${path}` : path)
+
+/** Changed files no card explains, and files the story names that did not change. Both mean the story cannot be trusted as-is. */
+export function coverage(facts: Facts, story: Story) {
+  const keys = facts.repos.flatMap((r) => r.files.map((f) => fileKey(facts, r.name, f.path)))
+  const carded = new Set(story.changes.flatMap((c) => c.files))
+  const named = new Set([...carded, ...story.hotspots.map((h) => h.file)])
+  return { unexplained: keys.filter((k) => !carded.has(k)), phantom: [...named].filter((n) => !keys.includes(n)) }
+}
+
+export function changeMap(s: Session) {
+  const dir = join(s.dir, '.change-map')
+  const facts = read(Facts, join(dir, 'facts.json'))
+  const story = facts && read(Story, join(dir, 'story.json'))
+  return { facts, story, coverage: facts && story ? coverage(facts, story) : null }
+}

@@ -6,7 +6,11 @@ import { HOME } from './config.ts'
 export const AgentId = z.enum(['claude', 'codex', 'kiro'])
 export type AgentId = z.infer<typeof AgentId>
 
-const Session = z.object({
+// Sessions saved before the tmux -> handle rename still carry `tmux`; read it as `handle`.
+const legacyHandle = (s: unknown) =>
+  s && typeof s === 'object' && 'tmux' in s && !('handle' in s) ? { ...s, handle: s.tmux } : s
+
+const Session = z.preprocess(legacyHandle, z.object({
   id: z.string(),
   task: z.string(),
   workspace: z.string(),
@@ -16,7 +20,7 @@ const Session = z.object({
   createdAt: z.string(),
   skills: z.array(z.string()).default([]), // seeded into the task dir at launch
   repos: z.array(z.object({ repo: z.string(), worktree: z.string(), branch: z.string() })),
-})
+}))
 export type Session = z.infer<typeof Session>
 
 // workspace name -> absolute repo paths

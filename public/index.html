@@ -14,9 +14,10 @@
         <h1>AGENT-SWARM <span class="dim">// REV 0.2</span></h1>
         <div id="usage" class="usage" aria-label="Plan usage"></div>
         <nav class="actions">
-          <button id="new-session" class="btn primary">[ NEW SESSION ]</button>
-          <button id="open-workspaces" class="btn">[ WORKSPACES ]</button>
-          <button id="open-skills" class="btn">[ SKILLS ]</button>
+          <button id="new-session" class="btn primary" type="button" aria-pressed="false">[ NEW SESSION ]</button>
+          <button id="open-workspaces" class="btn" type="button" aria-pressed="false">[ WORKSPACES ]</button>
+          <button id="open-skills" class="btn" type="button" aria-pressed="false">[ SKILLS ]</button>
+          <button id="notify" class="btn" type="button" aria-pressed="false">[ ALERTS: OFF ]</button>
         </nav>
       </header>
 
@@ -37,10 +38,84 @@
         <div id="tabs" class="tabs" role="tablist" aria-label="Session view" hidden>
           <button id="tab-term" role="tab" aria-selected="true" aria-controls="term">TERMINAL</button>
           <button id="tab-overview" role="tab" aria-selected="false" aria-controls="overview">OVERVIEW</button>
+          <button id="tab-changes" role="tab" aria-selected="false" aria-controls="changes">CHANGES</button>
         </div>
         <div id="term" class="term" role="tabpanel" aria-labelledby="tab-term"></div>
         <div id="overview" class="overview" role="tabpanel" aria-labelledby="tab-overview" hidden></div>
+        <div id="changes" class="overview changes" role="tabpanel" aria-labelledby="tab-changes" hidden></div>
         <p id="placeholder" class="placeholder">SELECT A SESSION <span class="dim">///</span></p>
+        <section id="session-view" class="view" aria-labelledby="session-title" hidden>
+          <header class="view-head">
+            <h2 id="session-title">&gt;&gt;&gt; NEW SESSION</h2>
+            <button type="button" class="btn small" data-close>[ CLOSE ]</button>
+          </header>
+          <form id="form-session" class="launch">
+            <div class="launch-body">
+              <label class="field task">TASK <input name="task" required maxlength="80" autocomplete="off" placeholder="add-login-rate-limit" /></label>
+              <div class="launch-row">
+                <label class="field">WORKSPACE <select name="workspace" required></select></label>
+                <label class="field">AGENT
+                  <select name="agent" required>
+                    <option value="claude">CLAUDE CODE</option>
+                    <option value="codex">CODEX</option>
+                    <option value="kiro">KIRO</option>
+                  </select>
+                </label>
+              </div>
+              <fieldset class="launch-skills">
+                <legend>SKILLS <span class="dim">COPIED INTO THE SESSION; REMEMBERED FOR NEXT TIME</span></legend>
+                <div id="skill-list"></div>
+              </fieldset>
+            </div>
+            <div class="view-foot">
+              <button type="button" class="btn" data-close>[ CANCEL ]</button>
+              <button type="submit" class="btn primary">[ LAUNCH ]</button>
+            </div>
+          </form>
+        </section>
+        <section id="workspaces-view" class="view" aria-labelledby="workspaces-title" hidden>
+          <header class="view-head">
+            <h2 id="workspaces-title">&gt;&gt;&gt; WORKSPACES</h2>
+            <button type="button" class="btn small" data-close>[ CLOSE ]</button>
+          </header>
+          <div class="lib-cols">
+            <div class="lib-list">
+              <button id="workspace-new" type="button" class="btn">[ + NEW WORKSPACE ]</button>
+              <ul id="workspace-list" class="lib-items"></ul>
+            </div>
+            <form id="form-workspace" class="lib-detail ws-form">
+              <h3 id="workspace-heading">NEW WORKSPACE</h3>
+              <label class="field">NAME <input name="name" required maxlength="40" autocomplete="off" placeholder="mealnir" /></label>
+              <label class="field">REPOS, ONE ABSOLUTE PATH PER LINE
+                <textarea name="repos" required rows="8" placeholder="~/_code/personal/mealnir&#10;~/_code/personal/mealnir-data"></textarea>
+              </label>
+              <div class="controls">
+                <button type="submit" class="btn primary">[ SAVE ]</button>
+                <button id="workspace-delete" type="button" class="btn small danger" hidden>[ DELETE ]</button>
+              </div>
+            </form>
+          </div>
+        </section>
+        <section id="skills-view" class="view" aria-labelledby="skills-title" hidden>
+          <header class="view-head">
+            <h2 id="skills-title">&gt;&gt;&gt; SKILLS <span id="skills-dir" class="dim"></span></h2>
+            <button type="button" class="btn small" data-close>[ CLOSE ]</button>
+          </header>
+          <div class="lib-cols">
+            <div class="lib-list">
+              <input id="skills-filter" type="search" autocomplete="off" placeholder="filter skills..." aria-label="Filter skills" />
+              <p class="dim">TICKED SKILLS ARE SEEDED INTO EVERY NEW SESSION. YOU CAN STILL CHANGE THE TICKS AT LAUNCH.</p>
+              <ul id="skill-manage" class="lib-items"></ul>
+              <form id="form-skill-import" class="lib-import">
+                <label>IMPORT FROM A FOLDER (ONE SKILL, OR A FOLDER OF SKILLS)
+                  <input name="path" required autocomplete="off" placeholder="~/.claude/skills" />
+                </label>
+                <button type="submit" class="btn primary">[ IMPORT ]</button>
+              </form>
+            </div>
+            <article id="skill-detail" class="lib-detail" aria-live="polite"></article>
+          </div>
+        </section>
       </main>
 
       <aside class="lane" aria-label="Chat lane">
@@ -62,59 +137,6 @@
         <span class="dim">LOCALHOST ONLY</span>
       </footer>
     </div>
-
-    <dialog id="dlg-session">
-      <form method="dialog" id="form-session">
-        <h2 class="label">&gt;&gt;&gt; NEW SESSION</h2>
-        <label>WORKSPACE <select name="workspace" required></select></label>
-        <label>AGENT
-          <select name="agent" required>
-            <option value="claude">CLAUDE CODE</option>
-            <option value="codex">CODEX</option>
-            <option value="kiro">KIRO</option>
-          </select>
-        </label>
-        <label>TASK <input name="task" required maxlength="80" autocomplete="off" placeholder="add-login-rate-limit" /></label>
-        <fieldset class="skills">
-          <legend>SKILLS <span class="dim">(COPIED INTO THE SESSION; REMEMBERED FOR NEXT TIME)</span></legend>
-          <div id="skill-list"></div>
-        </fieldset>
-        <div class="actions">
-          <button type="button" class="btn" data-close>[ CANCEL ]</button>
-          <button type="submit" class="btn primary">[ LAUNCH ]</button>
-        </div>
-      </form>
-    </dialog>
-
-    <dialog id="dlg-workspaces">
-      <h2 class="label">&gt;&gt;&gt; WORKSPACES</h2>
-      <ul id="workspace-list" class="workspaces"></ul>
-      <form id="form-workspace">
-        <label>NAME <input name="name" required maxlength="40" autocomplete="off" placeholder="mealnir" /></label>
-        <label>REPOS, ONE ABSOLUTE PATH PER LINE
-          <textarea name="repos" required rows="4" placeholder="~/_code/personal/mealnir&#10;~/_code/personal/mealnir-data"></textarea>
-        </label>
-        <div class="actions">
-          <button type="button" class="btn" data-close>[ CLOSE ]</button>
-          <button type="submit" class="btn primary">[ SAVE ]</button>
-        </div>
-      </form>
-    </dialog>
-
-    <dialog id="dlg-skills">
-      <h2 class="label">&gt;&gt;&gt; SKILLS <span id="skills-dir" class="dim"></span></h2>
-      <p class="dim pad">TICKED SKILLS ARE SEEDED INTO EVERY NEW SESSION. YOU CAN STILL CHANGE THE TICKS AT LAUNCH.</p>
-      <ul id="skill-manage" class="skill-manage"></ul>
-      <form id="form-skill-import">
-        <label>IMPORT FROM A FOLDER (ONE SKILL, OR A FOLDER OF SKILLS), ABSOLUTE PATH
-          <input name="path" required autocomplete="off" placeholder="~/.claude/skills" />
-        </label>
-        <div class="actions">
-          <button type="button" class="btn" data-close>[ CLOSE ]</button>
-          <button type="submit" class="btn primary">[ IMPORT ]</button>
-        </div>
-      </form>
-    </dialog>
 
     <script type="module" src="/app.js"></script>
   </body>
