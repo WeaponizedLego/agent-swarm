@@ -100,9 +100,10 @@ function attach(id) {
   socket?.close()
   term.reset()
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-  socket = new WebSocket(`${proto}://${location.host}/ws/sessions/${id}`)
+  fit.fit()
+  socket = new WebSocket(`${proto}://${location.host}/ws/sessions/${id}?cols=${term.cols}&rows=${term.rows}`)
   socket.onopen = () => {
-    fit.fit()
+    fit.fit() // the layout may have settled since; a no-op if not
     send({ t: 'r', cols: term.cols, rows: term.rows })
     if (tab === 'term') term.focus()
   }
@@ -136,10 +137,10 @@ function select(id) {
   selected = id
   showView(null) // picking a session means you want its terminal, not whatever view was open
   els.placeholder.hidden = true
+  render() // header and tabs first, so the terminal attaches at its final size
   attach(id)
   if (tab === 'overview') loadOverview()
   if (tab === 'changes') loadChanges()
-  render()
   renderLane()
 }
 
@@ -155,6 +156,7 @@ function render() {
         { type: 'button', onclick: () => select(s.id) },
         h('span', { className: 'task', textContent: s.task }),
         h('span', { className: 'sub', textContent: `${s.agent} / ${s.workspace} / ${s.repos.length} repo${s.repos.length === 1 ? '' : 's'}` }),
+        gitLine(s),
         state,
       )
       btn.setAttribute('aria-current', String(s.id === selected))
@@ -166,16 +168,31 @@ function render() {
   const current = sessions.find((s) => s.id === selected)
   els.meta.hidden = !current
   els.tabs.hidden = !current
+  $('resume').hidden = current?.state !== 'exited'
   if (current) els.stage.style.setProperty('--c', colourOf(current.id))
   else els.stage.style.removeProperty('--c')
   if (current) {
     els.fields.replaceChildren(
-      ...[['DIR', current.dir], ['BRANCH', current.repos[0]?.branch ?? ''], ['SESSION', current.handle], ['SKILLS', current.skills.join(', ') || 'none']].flatMap(([k, v]) => [
+      ...[['DIR', current.dir], ['BRANCH', current.repos[0]?.branch ?? ''], ['GIT', current.git.map((g) => `${g.repo}: ${repoGitText(g)}`).join(' / ')], ['SESSION', current.handle], ['SKILLS', current.skills.join(', ') || 'none']].flatMap(([k, v]) => [
         h('dt', { textContent: k }),
         h('dd', { textContent: v }),
       ]),
     )
   }
+}
+
+// A session's git state in one line: uncommitted files and commits the base branch does not have yet, summed over its repos.
+const repoGitText = (g) =>
+  g.uncommitted === null ? 'UNREADABLE' : [g.uncommitted && `${g.uncommitted} UNCOMMITTED`, g.ahead && `${g.ahead} AHEAD OF ${g.base}`].filter(Boolean).join(', ') || 'CLEAN'
+function gitLine(s) {
+  const sum = (k) => s.git.reduce((n, g) => n + (g[k] ?? 0), 0)
+  const uncommitted = sum('uncommitted')
+  const ahead = sum('ahead')
+  const unreadable = s.git.some((g) => g.uncommitted === null)
+  const text = [uncommitted && `${uncommitted} UNCOMMITTED`, ahead && `${ahead} AHEAD`, unreadable && 'GIT ?'].filter(Boolean).join(' / ') || 'CLEAN'
+  const el = h('span', { className: `sub git${uncommitted || unreadable ? ' dirty' : ''}`, textContent: text })
+  el.title = s.git.map((g) => `${g.repo}: ${repoGitText(g)}`).join('\n')
+  return el
 }
 
 async function refresh() {
@@ -188,6 +205,7 @@ async function refresh() {
       els.placeholder.hidden = false
       els.overview.replaceChildren()
       els.changes.replaceChildren()
+      changesJson = ''
       setTab('term')
     }
     const recoloured = assignColours()
@@ -212,6 +230,18 @@ async function stop(cleanup) {
   }
 }
 
+$('resume').onclick = async () => {
+  const s = sessions.find((x) => x.id === selected)
+  if (!s) return
+  try {
+    await api(`/api/sessions/${s.id}/resume`, { method: 'POST' })
+    say(`RESUMED ${s.task}`)
+    await refresh()
+    attach(s.id)
+  } catch (err) {
+    say(err.message, true)
+  }
+}
 $('stop').onclick = () => stop(false)
 $('stop-clean').onclick = () => stop(true)
 
@@ -356,8 +386,10 @@ function renderOverview() {
   els.overview.replaceChildren(...overviewData.map(repoCard))
 }
 
-// ---- changes: the change-map skill's story of what this session did, drawn with the overview's own parts ----
+// ---- changes: what this session changed. The file list and diff are read live from git on every load;
+// the story on top is the agent's (change-map skill) and is flagged when the code has moved on since. ----
 let changesData = null
+let changesJson = ''
 
 async function loadChanges() {
   const sid = selected
@@ -365,12 +397,23 @@ async function loadChanges() {
   try {
     const data = await api(`/api/sessions/${sid}/changes`)
     if (sid !== selected) return
+    const json = JSON.stringify(data)
+    if (json === changesJson && els.changes.childElementCount) return // nothing moved: keep the page as the reader left it
+    changesJson = json
     changesData = data
+    // A redraw replaces every node; keep the reader's place and the diffs they opened.
+    const scroll = els.changes.scrollTop
+    const opened = [...els.changes.querySelectorAll('details[open]')].map((d) => d.title)
     renderChanges()
+    for (const d of els.changes.querySelectorAll('details')) d.open = opened.includes(d.title)
+    els.changes.scrollTop = scroll
   } catch (err) {
-    els.changes.replaceChildren(h('p', { className: 'dim pad', textContent: `CANNOT READ THE CHANGE MAP: ${err.message}` }))
+    changesJson = ''
+    els.changes.replaceChildren(h('p', { className: 'dim pad', textContent: `CANNOT READ THE CHANGES: ${err.message}` }))
   }
 }
+// While the tab is open, keep it current without a click: the agent may still be editing, or rewriting the story.
+setInterval(() => tab === 'changes' && !document.hidden && loadChanges(), 20_000)
 
 // Kind of change -> glyph, label, colour. Glyphs instead of icons: this page is a terminal.
 const KINDS = {
@@ -387,35 +430,35 @@ const label = (text) => h('h4', { textContent: `>>> ${text}` })
 const section = (title, ...kids) => h('section', {}, label(title), ...kids)
 
 function askForMap() {
+  const stale = changesData?.story && changesData.stale
+  const ask = stale
+    ? 'The change map is out of date. Use the change-map skill again: collect, then update story.json for what changed since, keeping what is still true.'
+    : 'Use the change-map skill to map what this session has changed so far.'
   // Typed and submitted separately: sent in one chunk the Enter can land inside a paste and never submit.
-  send({ t: 'i', d: 'Use the change-map skill to map what this session has changed so far.' })
+  send({ t: 'i', d: ask })
   setTimeout(() => send({ t: 'i', d: '\r' }), 150)
   setTab('term')
-  say('ASKED THE AGENT FOR A CHANGE MAP. RELOAD THE TAB WHEN IT IS DONE.')
+  say('ASKED THE AGENT FOR THE STORY. THE CHANGES TAB PICKS IT UP WHEN IT IS WRITTEN.')
 }
 
 function changesActions() {
   const s = sessions.find((x) => x.id === selected)
   const canAsk = s?.skills.includes('change-map') && s.state !== 'exited'
+  const { story, stale } = changesData ?? {}
+  const word = !story ? '[ ASK THE AGENT FOR THE STORY ]' : stale ? '[ UPDATE THE STORY ]' : '[ REWRITE THE STORY ]'
   return h(
     'div',
     { className: 'row' },
-    h('button', { type: 'button', className: 'btn small', textContent: '[ RELOAD ]', onclick: loadChanges }),
+    h('button', { type: 'button', className: 'btn small', textContent: '[ REFRESH ]', title: 'Read the changes from git again', onclick: () => ((changesJson = ''), loadChanges()) }),
     canAsk
-      ? h('button', { type: 'button', className: 'btn small', textContent: changesData?.facts ? '[ ASK FOR A FRESH MAP ]' : '[ ASK THE AGENT FOR A MAP ]', onclick: askForMap })
-      : h('span', { className: 'dim', textContent: s?.skills.includes('change-map') ? 'SESSION HAS EXITED' : 'LAUNCH WITH THE CHANGE-MAP SKILL TICKED TO GET A MAP' }),
+      ? h('button', { type: 'button', className: `btn small${stale || !story ? ' primary' : ''}`, textContent: word, onclick: askForMap })
+      : h('span', { className: 'dim', textContent: s?.skills.includes('change-map') ? 'SESSION HAS EXITED' : 'LAUNCH WITH THE CHANGE-MAP SKILL TICKED FOR A STORY' }),
   )
 }
 
 function renderChanges() {
-  const { facts, story, coverage } = changesData ?? {}
-  if (!facts) {
-    els.changes.replaceChildren(
-      h('article', { className: 'repo' }, h('header', {}, h('h3', { textContent: 'NO CHANGE MAP YET' })),
-        h('section', {}, h('p', { className: 'cm-text', textContent: 'The agent writes one with the change-map skill: what changed, why, where to look first, with the diff underneath.' }), changesActions())),
-    )
-    return
-  }
+  const { facts, story, coverage, stale } = changesData
+  const moved = new Set(stale?.files ?? [])
 
   const multi = facts.repos.length > 1
   const files = facts.repos.flatMap((r) => r.files.map((f) => ({ ...f, repo: r.name, key: multi ? `${r.name}/${f.path}` : f.path })))
@@ -426,6 +469,16 @@ function renderChanges() {
   const del = files.reduce((n, f) => n + f.del, 0)
   const commits = facts.repos.flatMap((r) => r.commits.map((c) => ({ ...c, repo: r.name })))
 
+  // Deep paths are unreadable in full. Drop the folder every file shares (shown once instead), then keep
+  // the first folder and the last few: `lib/.../costPerUser/mappers/x.ts`. The full path is in the tooltip.
+  const dirs = files.map((f) => f.key.split('/').slice(0, -1))
+  const shared = dirs.length ? dirs.reduce((a, d) => a.slice(0, a.findIndex((seg, i) => seg !== d[i]) >>> 0)) : []
+  const root = shared.length ? `${shared.join('/')}/` : ''
+  const short = (key) => {
+    const segs = (key.startsWith(root) ? key.slice(root.length) : key).split('/')
+    return (segs.length > 4 ? [segs[0], '…', ...segs.slice(-3)] : segs).join('/')
+  }
+
   const openDiff = (f) => {
     const d = $(f.id)
     d.open = true
@@ -433,8 +486,12 @@ function renderChanges() {
   }
   const fileChip = (f) => {
     const [word, colour] = FILE_STATUS[f.status] ?? [f.status, 'dim']
-    return tint(h('button', { type: 'button', className: 'chip cm-file', title: `${word}, open its diff`, onclick: () => openDiff(f) },
-      h('span', { className: 'cm-k', textContent: f.status }), ` ${f.key} `, h('b', { className: 'cm-add', textContent: `+${f.add}` }), ' ', h('b', { className: 'cm-del', textContent: `-${f.del}` })), colour)
+    const path = short(f.key)
+    const cut = path.lastIndexOf('/') + 1
+    return tint(h('button', { type: 'button', className: `chip cm-file${moved.has(f.key) ? ' moved' : ''}`, title: `${f.key}  ${word}${moved.has(f.key) ? ', changed since the story' : ''}, open its diff`, onclick: () => openDiff(f) },
+      h('span', { className: 'cm-k', textContent: f.status }),
+      h('span', { className: 'cm-path' }, h('span', { className: 'dim', textContent: path.slice(0, cut) }), path.slice(cut)),
+      h('span', { className: 'cm-n' }, h('b', { className: 'cm-add', textContent: `+${f.add}` }), ' ', h('b', { className: 'cm-del', textContent: `-${f.del}` }))), colour)
   }
 
   const head = h(
@@ -450,10 +507,17 @@ function renderChanges() {
 
   const sections = []
   sections.push(h('section', {},
-    story?.tldr ? prose('p', story.tldr, { className: 'cm-text cm-tldr' }) : h('p', { className: 'dim', textContent: 'THE AGENT HAS COLLECTED THE FACTS BUT NOT WRITTEN THE STORY YET.' }),
+    story ? prose('p', story.tldr, { className: 'cm-text cm-tldr' }) : h('p', { className: 'cm-text', textContent: 'No story yet. The files and diff below are live from git. The agent can explain them with the change-map skill: what changed, why, and where to look first.' }),
     h('p', { className: 'dim cm-base', textContent: facts.repos.map((r) => `${r.name} ${r.branch} vs ${r.base.slice(0, 8)} (${r.how})`).join(' / ') }),
     changesActions(),
   ))
+
+  if (stale) {
+    sections.push(h('section', { className: 'cm-stale-note' }, label(`THE CODE MOVED ON SINCE THE STORY (${hhmm(stale.at)})`),
+      h('p', { className: 'cm-text', textContent: `${stale.files.length} file${stale.files.length === 1 ? '' : 's'} changed after the story was written, marked with a dashed edge below. The rest of the story may still be right.` }),
+      h('div', { className: 'row' }, ...stale.files.map((k) => (byKey.has(k) ? fileChip(byKey.get(k)) : h('span', { className: 'chip', textContent: `${short(k)} (reverted)` })))),
+    ))
+  }
 
   if (coverage && (coverage.unexplained.length || coverage.phantom.length)) {
     sections.push(h('section', { className: 'cm-warn' }, label('THE STORY AND THE DIFF DISAGREE'),
@@ -466,8 +530,8 @@ function renderChanges() {
   if (story?.hotspots.length) {
     sections.push(section('LOOK HERE FIRST', h('ol', { className: 'cm-hot' }, ...story.hotspots.map((s) => {
       const f = byKey.get(s.file)
-      const where = s.file + (s.line ? `:${s.line}` : '')
-      return h('li', {}, f ? h('button', { type: 'button', className: 'chip', textContent: where, onclick: () => openDiff(f) }) : h('span', { className: 'chip', textContent: where }), ' ', prose('span', s.why, { className: 'cm-text' }))
+      const where = short(s.file) + (s.line ? `:${s.line}` : '')
+      return h('li', {}, f ? h('button', { type: 'button', className: 'chip', title: s.file, textContent: where, onclick: () => openDiff(f) }) : h('span', { className: 'chip', textContent: where }), ' ', prose('span', s.why, { className: 'cm-text' }))
     }))))
   }
 
@@ -501,15 +565,16 @@ function renderChanges() {
   const peak = Math.sqrt(Math.max(1, ...files.map((f) => f.add + f.del)))
   const groups = new Map()
   for (const f of files) {
-    const dir = (multi ? `${f.repo}/` : '') + (f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/') + 1) : '')
-    groups.set(dir || '/', [...(groups.get(dir || '/') ?? []), f])
+    const dir = f.key.slice(0, f.key.lastIndexOf('/') + 1)
+    groups.set(dir, [...(groups.get(dir) ?? []), f])
   }
   sections.push(section('WHERE THE EDITS LANDED',
+    root ? h('p', { className: 'dim cm-base', textContent: `ALL UNDER ${root}` }) : null,
     h('div', { className: 'cm-mosaic' }, ...[...groups].sort(([a], [b]) => a.localeCompare(b)).map(([dir, fs]) => h('div', { className: 'cm-row' },
-      h('span', { className: 'dim cm-dir', textContent: dir }),
+      h('span', { className: 'dim cm-dir', title: dir, textContent: dir === root ? './' : short(`${dir}x`).slice(0, -1) }),
       h('div', { className: 'cm-tiles' }, ...fs.map((f) => {
         const [word, colour] = FILE_STATUS[f.status] ?? [f.status, 'dim']
-        const tile = tint(h('button', { type: 'button', className: `cm-tile${unexplained.has(f.key) ? ' lost' : ''}`, title: `${f.path}  ${word}  +${f.add} -${f.del}`, textContent: f.path.split('/').pop(), onclick: () => openDiff(f) }), colour)
+        const tile = tint(h('button', { type: 'button', className: `cm-tile${unexplained.has(f.key) ? ' lost' : moved.has(f.key) ? ' moved' : ''}`, title: `${f.path}  ${word}  +${f.add} -${f.del}`, textContent: f.path.split('/').pop(), onclick: () => openDiff(f) }), colour)
         tile.style.width = `${((Math.sqrt(f.add + f.del) / peak) * 100).toFixed(1)}%`
         return tile
       }))))),
@@ -522,7 +587,7 @@ function renderChanges() {
   if (commits.length) {
     sections.push(section('COMMITS', ...commits.map((c) => h('div', { className: 'cm-text' }, h('span', { className: 'dim', textContent: `${c.sha} ` }), c.subject, multi ? h('span', { className: 'dim', textContent: ` ${c.repo}` }) : null))))
   }
-  sections.push(section('RAW DIFF', ...files.map((f) => h('details', { className: 'cm-diff', id: f.id },
+  sections.push(section('RAW DIFF', ...files.map((f) => h('details', { className: 'cm-diff', id: f.id, title: f.key },
     h('summary', {}, fileChip(f), f.from ? h('span', { className: 'dim', textContent: ` FROM ${f.from}` }) : null),
     f.binary ? h('p', { className: 'dim', textContent: 'BINARY FILE' }) : h('pre', { className: 'output' },
       ...f.patch.map((l) => h('span', { className: l[0] === '+' ? 'cm-add' : l[0] === '-' ? 'cm-del' : l.startsWith('@@') ? 'cm-hunk' : '', textContent: `${l}\n` })),
@@ -549,7 +614,9 @@ async function drawDiagrams() {
         edgeLabelBackground: css('--bg'), clusterBkg: css('--panel'), clusterBorder: css('--line'),
         actorBkg: css('--panel'), actorBorder: css('--line'), actorTextColor: css('--fg'), signalColor: css('--dim'), signalTextColor: css('--fg'), noteBkgColor: css('--raised'), noteTextColor: css('--fg'),
       },
-      flowchart: { curve: 'linear' },
+      // Natural size, scrolled sideways when wide: shrunk to fit, a big map's labels become unreadable.
+      flowchart: { curve: 'linear', useMaxWidth: false },
+      sequence: { useMaxWidth: false },
     })
     return m
   })

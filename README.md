@@ -51,9 +51,9 @@ folder in the collection with your editor.
 remembered for the next launch (`~/.agent-swarm/skills.json`). It is a copy, so editing or deleting a skill later does
 not change a running session. Folders without a `SKILL.md` are not listed.
 
-**Changes** in a session shows what its agent changed, written by the `change-map` skill: cards by intent, a diagram
-of the parts that moved, where the edits landed, and the raw diff. Tick `change-map` at launch, then ask the agent for
-a map (the tab has a button for it).
+**Changes** in a session shows what it changed. The files and diff come live from git; on top, the agent explains them
+with the `change-map` skill: cards by intent, a diagram of the parts that moved, and where to look first. When the code
+moves on after that, the tab says which files and offers to have the agent update the story. Tick `change-map` at launch.
 
 ## How sessions run per OS
 

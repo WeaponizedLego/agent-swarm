@@ -18,7 +18,13 @@ session's changes into a map the user reads in the agent-swarm dashboard: open t
 **CHANGES**.
 
 Division of labour: **git supplies the facts, you supply the meaning, the dashboard draws it.**
-You write two JSON files and nothing else; no HTML, no styling.
+You write `story.json` and nothing else; no HTML, no styling.
+
+The dashboard reads the files and diff **live from git** every time the tab loads, so those are never
+out of date. Your story is checked against the `facts.json` snapshot you collected before writing
+it: when the code has changed since, the tab shows which files moved on and offers **UPDATE THE
+STORY**. So always run `collect` right before writing or updating the story, never reuse an old
+snapshot.
 
 ## 1. Collect
 
@@ -98,6 +104,9 @@ matters most to the reader, not the order you did things in.
   (the dashboard colours them and adds a legend; only `flowchart`/`graph` get the classes).
 - Label edges with what flows along them (a call, an event, a route).
 - At most about 15 nodes. Name nodes by role ("session form", "lane poll"), not file paths.
+- The dashboard panel is about 800px wide and draws diagrams at full size, scrolling sideways
+  rather than shrinking them. So use `flowchart TB` for more than about 6 nodes, keep labels short,
+  and use `subgraph`s to group, rather than one long left-to-right chain.
 - Add a second diagram only when it shows something the first can't: a `sequenceDiagram` for a
   changed runtime flow, or a before/after pair when the structure itself was rerouted.
 - Skip diagrams entirely for a change with no structure to show (copy edits, a config bump).
@@ -119,12 +128,13 @@ It lists changed files no card explains and story files that did not change, and
 until both lists are empty. Fix `story.json` and run it again. The dashboard shows the same check
 as a red panel, so a map with gaps is visible to the user too.
 
-Then tell the user in chat: the map is in the session's **CHANGES** tab (press RELOAD if it is
-already open), plus the TL;DR and the top hotspot, so they get the gist without switching tabs.
+Then tell the user in chat: the map is in the session's **CHANGES** tab (it refreshes itself), plus the TL;DR and the top hotspot, so they get the gist without switching tabs.
 
-The user can also press **ASK THE AGENT FOR A MAP** in that tab, which types a request into your
-terminal. Treat it like any other request for this skill. When asked again later in the session,
-rerun `collect` too: the facts are a snapshot, not live.
+The user can also press a button in that tab that types a request into your terminal: **ASK THE
+AGENT FOR THE STORY** when there is none, **UPDATE THE STORY** when the code moved on after it was
+written. For an update, run `collect` again, read the diffs of the files that changed since, and
+rewrite only the cards, diagrams, hotspots and checks they affect; keep what is still true. The tab
+picks the new story up on its own within about 20 seconds.
 
 ## Boundaries
 

@@ -18,6 +18,18 @@ const BIN: Record<AgentId, string[]> = {
 export const agentArgv = (agent: AgentId): string[] => BIN[agent]
 
 /**
+ * Brings an exited agent back with its conversation, started in the same task dir. Claude's `--continue` and
+ * Kiro's `--resume` pick the latest conversation in the current folder, which is this task's alone. Codex's
+ * `--last` is not scoped to the folder, so it gets the picker instead of risking another project's session.
+ */
+const RESUME: Record<AgentId, string[]> = {
+  claude: [...BIN.claude, '--continue'],
+  codex: ['codex', 'resume'],
+  kiro: [...BIN.kiro, '--resume'],
+}
+export const resumeArgv = (agent: AgentId): string[] => RESUME[agent]
+
+/**
  * PATH lookup to an absolute binary, so tmux's server (which may have a stale PATH) and ConPTY both
  * get an exact file. On Windows a bare name is really `name.exe` / `name.cmd`, so PATHEXT is tried too.
  */

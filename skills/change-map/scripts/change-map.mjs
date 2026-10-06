@@ -1,17 +1,13 @@
 #!/usr/bin/env node
 // change-map: git collects the facts, the agent writes the story, the agent-swarm dashboard draws both (CHANGES tab).
-//   node change-map.mjs collect [--base <ref>] [--out <dir>]   writes facts.json, prints a compact summary
-//   node change-map.mjs check [--out <dir>]                     every changed file explained by story.json?
-// Covers every worktree of a swarm task, wherever in it you run it. No dependencies.
+//   node change-map.mjs collect [--base <ref>]   writes facts.json, prints a compact summary
+//   node change-map.mjs check                    every changed file explained by story.json?
+// The dashboard imports collectFacts() from its own copy of this file, so both read git the same way. No dependencies.
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const [cmd, ...rest] = process.argv.slice(2)
-const flag = (n) => {
-  const i = rest.indexOf(`--${n}`)
-  return i >= 0 ? rest[i + 1] : undefined
-}
 const git = (cwd, ...a) =>
   execFileSync('git', ['-c', 'core.quotePath=false', ...a], {
     cwd, encoding: 'utf8', maxBuffer: 256 << 20, stdio: ['ignore', 'pipe', 'ignore'],
@@ -23,33 +19,25 @@ const tryGit = (...a) => {
     return ''
   }
 }
-
-// A swarm task dir is not a repo but holds one worktree per repo on a swarm/* branch. Started inside one of
-// those worktrees, step up to the task dir, so every repo is covered and the dashboard finds the output.
-const here = process.cwd()
-const hereTop = tryGit(here, 'rev-parse', '--show-toplevel')
-const inSwarm = hereTop && tryGit(hereTop, 'symbolic-ref', '--short', 'HEAD').startsWith('swarm/')
-const cwd = inSwarm ? dirname(hereTop) : here
-const top = inSwarm ? '' : hereTop
-// Outside the swarm the output goes in the repo's git dir, so it never shows up as a change itself.
-const OUT = flag('out')
-  ? resolve(flag('out'))
-  : top
-    ? join(git(top, 'rev-parse', '--absolute-git-dir'), 'change-map')
-    : join(cwd, '.change-map')
 const PATCH_CAP = 400 // lines of diff kept per file for the drill-down
+
+/** The git repos directly inside a folder: in a swarm task dir, one worktree per repo. */
+export const reposIn = (dir) =>
+  readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && existsSync(join(dir, e.name, '.git')))
+    .map((e) => join(dir, e.name))
 
 // ---------- collect ----------
 
-/** Where "this session" starts: the swarm branch's creation point, else the fork from main, else HEAD. */
-function baseOf(repo) {
-  const explicit = flag('base')
+/**
+ * Where "this session" starts. A branch remembers where it was created, through renames too, so that comes
+ * first; a branch with no such entry (main, or a clone) falls back to its fork from main, then to HEAD.
+ */
+function baseOf(repo, explicit) {
   if (explicit) return { base: git(repo, 'rev-parse', explicit), how: `--base ${explicit}` }
   const branch = tryGit(repo, 'symbolic-ref', '--short', 'HEAD')
-  if (branch.startsWith('swarm/')) {
-    const created = tryGit(repo, 'reflog', 'show', '--format=%H', `refs/heads/${branch}`).split('\n').pop()
-    if (created) return { base: created, how: `where ${branch} was created` }
-  }
+  const [created, ...from] = (branch && tryGit(repo, 'reflog', 'show', '--format=%H %gs', `refs/heads/${branch}`).split('\n').pop()?.split(' ')) || []
+  if (created && from.join(' ').startsWith('branch: Created from')) return { base: created, how: `where ${branch} was ${from.slice(1).join(' ').toLowerCase()}` }
   const main = ['origin/HEAD', 'main', 'master'].find((r) => tryGit(repo, 'rev-parse', '--verify', '-q', r))
   if (main && branch && !['main', 'master'].includes(branch)) {
     const fork = tryGit(repo, 'merge-base', 'HEAD', main)
@@ -61,6 +49,8 @@ function baseOf(repo) {
 // ponytail: regex, not a parser; catches declarations (arrow consts only at top level) in JS/TS/Python/Go/Rust. Swap for tree-sitter if it misleads.
 const DECL =
   /^\s*(?:export\s+)?(?:default\s+)?(?:pub(?:\([\w:]+\))?\s+)?(?:async\s+)?(?:function\*?|class|interface|type|enum|def|func|fn|struct|trait)\s+([A-Za-z_$][\w$]*)|^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\(|function\b|[A-Za-z_$][\w$]*\s*=>)/
+// Only source files: a code sample inside a README or SKILL.md is not a declaration of this repo.
+const CODE = /\.(?:[cm]?[jt]sx?|py|go|rs|rb|java|kt|swift|cs|php|vue|svelte)$/
 const declName = (s) => {
   const m = DECL.exec(s)
   return m && (m[1] ?? m[2])
@@ -84,8 +74,8 @@ function symbols(patch) {
   return { added, removed, changed }
 }
 
-function collectRepo(repo) {
-  const { base, how } = baseOf(repo)
+function collectRepo(repo, explicitBase) {
+  const { base, how } = baseOf(repo, explicitBase)
   const files = new Map()
 
   const ns = tryGit(repo, 'diff', '-M', '--name-status', '-z', base).split('\0').filter(Boolean)
@@ -113,7 +103,7 @@ function collectRepo(repo) {
     const f = files.get(p)
     if (!f) continue
     const body = lines.slice(Math.max(0, lines.findIndex((l) => l.startsWith('@@'))))
-    f.symbols = symbols(body)
+    f.symbols = symbols(CODE.test(p) ? body : [])
     f.patch = body.slice(0, PATCH_CAP)
     f.truncated = body.length > PATCH_CAP
   }
@@ -127,7 +117,7 @@ function collectRepo(repo) {
     const body = binary ? [] : text.replace(/\n$/, '').split('\n').map((l) => '+' + l)
     files.set(p, {
       path: p, status: 'A', untracked: true, add: body.length, del: 0, binary,
-      symbols: symbols(body), patch: body.slice(0, PATCH_CAP), truncated: body.length > PATCH_CAP,
+      symbols: symbols(CODE.test(p) ? body : []), patch: body.slice(0, PATCH_CAP), truncated: body.length > PATCH_CAP,
     })
   }
 
@@ -144,16 +134,32 @@ function collectRepo(repo) {
   }
 }
 
-function collect() {
-  const repos = top
-    ? [top]
-    : readdirSync(cwd, { withFileTypes: true })
-        .filter((e) => e.isDirectory() && existsSync(join(cwd, e.name, '.git')))
-        .map((e) => join(cwd, e.name))
+/** Everything git can say about the changes in these repos, as the dashboard and the story both expect it. */
+export function collectFacts(repos, explicitBase) {
+  return { generatedAt: new Date().toISOString(), repos: repos.map((r) => collectRepo(r, explicitBase)) }
+}
+
+// ---------- command line, for the agent ----------
+
+function where() {
+  // Seeded into a swarm task, this file sits at <task>/<agent dir>/skills/change-map/scripts/: the task dir holds
+  // every worktree, so cover them all from wherever the agent stands. Anywhere else, use the repo it runs in.
+  // Swarm repos are linked worktrees (.git is a file), which tells a task dir apart from, say, ~ holding clones.
+  const task = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
+  const worktrees = reposIn(task).filter((r) => statSync(join(r, '.git')).isFile())
+  if (worktrees.length && !tryGit(task, 'rev-parse', '--show-toplevel')) return { repos: worktrees, out: join(task, '.change-map') }
+  const top = tryGit(process.cwd(), 'rev-parse', '--show-toplevel')
+  if (top) return { repos: [top], out: join(git(top, 'rev-parse', '--absolute-git-dir'), 'change-map') } // never shows up as a change itself
+  const repos = reposIn(process.cwd())
   if (!repos.length) throw new Error('No git repo here or in any folder directly inside it')
-  const facts = { generatedAt: new Date().toISOString(), repos: repos.map(collectRepo) }
-  mkdirSync(OUT, { recursive: true })
-  writeFileSync(join(OUT, 'facts.json'), JSON.stringify(facts, null, 1))
+  return { repos, out: join(process.cwd(), '.change-map') }
+}
+
+function collect(base) {
+  const { repos, out } = where()
+  const facts = collectFacts(repos, base)
+  mkdirSync(out, { recursive: true })
+  writeFileSync(join(out, 'facts.json'), JSON.stringify(facts, null, 1))
 
   const multi = facts.repos.length > 1
   for (const r of facts.repos) {
@@ -166,15 +172,14 @@ function collect() {
       console.log(`  ${f.status} ${name}  +${f.add} -${f.del}${f.binary ? ' binary' : ''}${f.untracked ? ' untracked' : ''}  ${sym.slice(0, 12).join(' ')}`)
     }
   }
-  console.log(`\nfacts: ${join(OUT, 'facts.json')}\nnext:  write ${join(OUT, 'story.json')}, then run check`)
+  console.log(`\nfacts: ${join(out, 'facts.json')}\nnext:  write ${join(out, 'story.json')}, then run check`)
 }
-
-// ---------- check ----------
 
 /** The story must explain every changed file and name no file that did not change; the dashboard shows the same check. */
 function check() {
-  const facts = JSON.parse(readFileSync(join(OUT, 'facts.json'), 'utf8'))
-  const storyPath = join(OUT, 'story.json')
+  const { out } = where()
+  const facts = JSON.parse(readFileSync(join(out, 'facts.json'), 'utf8'))
+  const storyPath = join(out, 'story.json')
   if (!existsSync(storyPath)) throw new Error(`Write ${storyPath} first (see SKILL.md for its shape)`)
   const story = JSON.parse(readFileSync(storyPath, 'utf8'))
   const multi = facts.repos.length > 1
@@ -189,11 +194,15 @@ function check() {
   console.log(`ok: ${keys.length} file(s), all explained. The dashboard's CHANGES tab shows it.`)
 }
 
-try {
-  if (cmd === 'collect') collect()
-  else if (cmd === 'check') check()
-  else throw new Error('usage: change-map.mjs collect [--base <ref>] [--out <dir>] | check [--out <dir>]')
-} catch (err) {
-  console.error(err.message)
-  process.exit(1)
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const [cmd, ...rest] = process.argv.slice(2)
+  const base = rest.includes('--base') ? rest[rest.indexOf('--base') + 1] : undefined
+  try {
+    if (cmd === 'collect') collect(base)
+    else if (cmd === 'check') check()
+    else throw new Error('usage: change-map.mjs collect [--base <ref>] | check')
+  } catch (err) {
+    console.error(err.message)
+    process.exit(1)
+  }
 }

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, isAbsolute, join, resolve } from 'node:path'
-import { agentArgv, resolveBin } from './agents.ts'
+import { agentArgv, resolveBin, resumeArgv } from './agents.ts'
 import { SKILLS_DIR, TASKS_DIR } from './config.ts'
 import { UserError } from './errors.ts'
 import { git } from './run.ts'
@@ -85,9 +85,28 @@ export async function createSession(input: { workspace: string; agent: AgentId; 
   }
 }
 
+/**
+ * Where each worktree stands: uncommitted files, and commits on the swarm branch that the repo's checked-out
+ * branch (what it was cut from) does not have yet. A repo git cannot read reports null rather than failing the list.
+ * ponytail: runs git on every poll (2s); cache per worktree if a large workspace makes the list slow
+ */
+async function gitStatus(r: Session['repos'][number]) {
+  try {
+    const [porcelain, base] = await Promise.all([
+      git(r.worktree, 'status', '--porcelain'),
+      git(r.repo, 'rev-parse', '--abbrev-ref', 'HEAD'),
+    ])
+    const ahead = Number((await git(r.worktree, 'rev-list', '--count', `${base.trim()}..HEAD`)).trim())
+    return { repo: basename(r.repo), base: base.trim(), uncommitted: porcelain.split('\n').filter(Boolean).length, ahead }
+  } catch {
+    return { repo: basename(r.repo), base: null, uncommitted: null, ahead: null }
+  }
+}
+
 export async function listSessions() {
   return Promise.all(
     loadSessions().map(async (s) => {
+      const repoGit = Promise.all(s.repos.map(gitStatus))
       let state: AgentState = 'exited'
       let idleSecs = 0
       if (await terminals.alive(s.handle)) {
@@ -95,12 +114,20 @@ export async function listSessions() {
         idleSecs = seen.idleSecs
         state = classify(seen.tail, idleSecs)
       }
-      return { ...s, state, idleSecs }
+      return { ...s, state, idleSecs, git: await repoGit }
     }),
   )
 }
 
 export const findSession = (id: string) => loadSessions().find((s) => s.id === id)
+
+/** Restarts an agent that exited (a double Ctrl+C, a crash) in its task dir, picking its conversation back up. */
+export async function resumeSession(id: string) {
+  const s = findSession(id)
+  if (!s) throw new UserError('No such session')
+  if (await terminals.alive(s.handle)) throw new UserError('Session is still running')
+  await terminals.start(s.handle, s.dir, resolveBin(resumeArgv(s.agent)))
+}
 
 /**
  * Stops the agent and forgets the session. Worktrees are kept (they hold the agent's work)

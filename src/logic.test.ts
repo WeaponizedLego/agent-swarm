@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { agentArgv, launchArgv, resolveBin } from './agents.ts'
-import { coverage } from './changes.ts'
+import { changedSince, coverage } from './changes.ts'
 import { UserError } from './errors.ts'
 import { cleanBlock, parseLine } from './haiku.ts'
 import { findOverlaps } from './housekeeper.ts'
@@ -212,5 +212,15 @@ describe('change map coverage', () => {
   it('prefixes paths with the repo once a task spans several repos', () => {
     const facts = { generatedAt: '', repos: [repo('api', ['a.ts']), repo('web', ['a.ts'])] }
     expect(coverage(facts, story(['api/a.ts']))).toEqual({ unexplained: ['web/a.ts'], phantom: [] })
+  })
+})
+
+describe('change map staleness', () => {
+  const facts = (files: Array<[string, number]>) => ({
+    generatedAt: '',
+    repos: [{ name: 'api', branch: 'b', base: 'x', how: '', commits: [], files: files.map(([path, add]) => ({ path, status: 'M', add, del: 0, symbols: { added: [], removed: [], changed: [] }, patch: [] })) }],
+  })
+  it('lists files edited, added or reverted since the story was written', () => {
+    expect(changedSince(facts([['a.ts', 1], ['b.ts', 2], ['gone.ts', 1]]), facts([['a.ts', 1], ['b.ts', 5], ['new.ts', 3]]))).toEqual(['b.ts', 'gone.ts', 'new.ts'])
   })
 })

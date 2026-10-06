@@ -11,7 +11,7 @@ import { UserError } from './errors.ts'
 import { askHouse, startHouseKeeper } from './housekeeper.ts'
 import { post, since } from './lane.ts'
 import { overview } from './overview.ts'
-import { createSession, findSession, listSessions, removeSession, removeWorkspace, setWorkspace } from './sessions.ts'
+import { createSession, findSession, listSessions, removeSession, resumeSession, removeWorkspace, setWorkspace } from './sessions.ts'
 import { catalog, importSkills, readSkill, removeSkill } from './skills.ts'
 import { AgentId, loadEnabledSkills, loadWorkspaces, saveEnabledSkills } from './store.ts'
 import { TERMINAL_HOST, terminals } from './terminals.ts'
@@ -98,6 +98,11 @@ app.delete('/api/sessions/:id', async (req, reply) => {
   await removeSession(id, cleanup)
   return reply.code(204).send()
 })
+app.post('/api/sessions/:id/resume', async (req, reply) => {
+  const { id } = z.object({ id: z.string() }).parse(req.params)
+  await resumeSession(id)
+  return reply.code(204).send()
+})
 
 app.get('/api/sessions/:id/overview', async (req) => {
   const { id } = z.object({ id: z.string() }).parse(req.params)
@@ -147,7 +152,10 @@ app.get('/ws/sessions/:id', { websocket: true }, async (socket, req) => {
   const session = findSession(id)
   if (!session || !(await terminals.alive(session.handle))) return socket.close(1008, 'session not running')
 
-  const term = terminals.attach(session.handle, 120, 32)
+  // Attach at the browser's size: resizing right after the attach can race tmux's startup and leave it drawing
+  // a smaller screen than the browser shows, until the next window resize.
+  const { cols, rows } = z.object({ cols: z.coerce.number().int().min(10).max(500).default(120), rows: z.coerce.number().int().min(2).max(300).default(32) }).parse(req.query)
+  const term = terminals.attach(session.handle, cols, rows)
   term.onData((d) => socket.send(d))
   term.onExit(() => socket.close())
   socket.on('message', (raw) => {
